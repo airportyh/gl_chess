@@ -32,6 +32,26 @@ struct Board {
     struct Piece *squares[64];
 };
 
+struct BoardRender {
+    GLfloat top;
+    GLfloat left;
+    GLfloat width;
+    GLfloat height;
+    GLfloat boardVertices[64 * 5 * 6];
+    GLuint boardVertexArrayId;
+    GLuint boardVertexBufferId;
+    GLfloat piecesVertices[32 * 5 * 6];
+    GLuint piecesVertexArrayId;
+    GLuint piecesVertexBufferId;
+};
+
+struct Board board;
+GLfloat piecesVertices[32 * 5 * 6];
+static int draggingSquare = -1;
+GLuint piecesVertexArrayId;
+GLuint piecesVertexBufferId;
+GLuint boardVertexArrayId;
+
 void displayGLVersions() {
     printf("OpenGL version: %s\n", glGetString(GL_VERSION));
     printf("GLSL version: %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
@@ -106,6 +126,12 @@ void plotSquareInVertices(
     vertices[idxOffset + 29] = texTop;
 }
 
+void clearPieceVertex(int idxOffset, GLfloat *vertices) {
+    for (int i = 0; i < 30; i++) {
+        vertices[idxOffset + i] = 0.0;
+    }
+}
+
 GLenum textureFormat(int channels) {
     return GL_RGBA;
     GLenum result;
@@ -160,20 +186,108 @@ GLuint setupBoard() {
     return vertexArrayId;
 }
 
-GLuint setupPieces(GLfloat *piecesVertices) {
-    GLuint vertexArrayId;
-    glGenVertexArrays(1, &vertexArrayId);
-    glBindVertexArray(vertexArrayId);
-    GLuint vertexBufferId;
-    glGenBuffers(1, &vertexBufferId);
+void plotPieceInVertices(int position, struct Piece *piece, GLfloat *vertices) {
+    GLfloat pieceWidth = 1.0 / 7.0;
+    GLfloat texTop, texLeft, texBottom, texRight;
+    if (piece->color == Black) {
+        texTop = 0.0;
+        texBottom = 0.5;
+    } else { // White
+        texTop = 0.5;
+        texBottom = 1.0;
+    }
     
+    switch (piece->type) {
+        case Pawn:
+            texLeft = 1.0 * pieceWidth;
+            break;
+        case Knight:
+            texLeft = 2.0 * pieceWidth;
+            break;
+        case Biship:
+            texLeft = 3.0 * pieceWidth;
+            break;
+        case Rook:
+            texLeft = 4.0 * pieceWidth;
+            break;
+        case King:
+            texLeft = 5.0 * pieceWidth;
+            break;
+        case Queen:
+            texLeft = 6.0 * pieceWidth;
+            break;
+    }
     
-    plotSquareInVertices(0.0, 0.0, 0.0, 1.0 / 7.0, 0.5, 2.0 / 7.0, 0, piecesVertices);
+    texRight = texLeft + pieceWidth;
     
-    glBindBuffer(GL_ARRAY_BUFFER, vertexBufferId);
+    GLfloat squareLength = 2.0 / 8.0;
+    GLfloat x = squareLength * (position % 8);
+    GLfloat y = squareLength * (7 - floor(position / 8));
+    
+    printf("Plotting type %d at x = %f, y = %f\n", piece->type, x, y);
+    // printf("texTop = %f, texLeft = %f, texBottom = %f, texRight = %f\n", texTop, texLeft, texBottom, texRight);
+    
+    plotSquareInVertices(x, y, texTop, texLeft, texBottom, texRight, piece->vertexArrayIndex * 30, vertices);
+}
+
+void plotPieceXYInVertices(double x, double y, struct Piece *piece, GLfloat *vertices) {
+    GLfloat pieceWidth = 1.0 / 7.0;
+    GLfloat texTop, texLeft, texBottom, texRight;
+    if (piece->color == Black) {
+        texTop = 0.0;
+        texBottom = 0.5;
+    } else { // White
+        texTop = 0.5;
+        texBottom = 1.0;
+    }
+    
+    switch (piece->type) {
+        case Rook:
+            texLeft = 4.0 * pieceWidth;
+            break;
+        case Pawn:
+            texLeft = 1.0 * pieceWidth;
+            break;
+        case Knight:
+            texLeft = 2.0 * pieceWidth;
+            break;
+        case Biship:
+            texLeft = 3.0 * pieceWidth;
+            break;
+        case King:
+            texLeft = 5.0 * pieceWidth;
+            break;
+        case Queen:
+            texLeft = 6.0 * pieceWidth;
+            break;
+    }
+    
+    texRight = texLeft + pieceWidth;
+    
+    GLfloat squareLength = 2.0 / 8.0;
+    
+    plotSquareInVertices(x, y, texTop, texLeft, texBottom, texRight, piece->vertexArrayIndex * 30, vertices);
+}
+
+void setupPieces(GLfloat *piecesVertices, struct Board *board, GLuint *vertexArrayId, GLuint *vertexBufferId) {
+    GLuint _vertexArrayId;
+    glGenVertexArrays(1, &_vertexArrayId);
+    glBindVertexArray(_vertexArrayId);
+    GLuint _vertexBufferId;
+    glGenBuffers(1, &_vertexBufferId);
+    
+    for (int i = 0; i < 64; i++) {
+        struct Piece *piece = board->squares[i];
+        if (piece != NULL) {
+            plotPieceInVertices(i, piece, piecesVertices);
+        }
+    }
+    
+    glBindBuffer(GL_ARRAY_BUFFER, _vertexBufferId);
     glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 32 * 5 * 6, piecesVertices, GL_DYNAMIC_DRAW);
 
-    return vertexArrayId;
+    *vertexBufferId  = _vertexBufferId;
+    *vertexArrayId = _vertexArrayId;
 }
 
 struct Piece *createPiece(enum Color color, enum PieceType type, int vertexArrayIndex) {
@@ -206,11 +320,97 @@ void initBoard(struct Board *board) {
     board->squares[0] = createPiece(Black, Rook, 0);
     board->squares[1] = createPiece(Black, Knight, 1);
     board->squares[2] = createPiece(Black, Biship, 2);
+    board->squares[3] = createPiece(Black, Queen, 3);
+    board->squares[4] = createPiece(Black, King, 4);
+    board->squares[5] = createPiece(Black, Biship, 5);
+    board->squares[6] = createPiece(Black, Knight, 6);
+    board->squares[7] = createPiece(Black, Rook, 7);
+    board->squares[8] = createPiece(Black, Pawn, 8);
+    board->squares[9] = createPiece(Black, Pawn, 9);
+    board->squares[10] = createPiece(Black, Pawn, 10);
+    board->squares[11] = createPiece(Black, Pawn, 11);
+    board->squares[12] = createPiece(Black, Pawn, 12);
+    board->squares[13] = createPiece(Black, Pawn, 13);
+    board->squares[14] = createPiece(Black, Pawn, 14);
+    board->squares[15] = createPiece(Black, Pawn, 15);
+    
+    board->squares[48] = createPiece(White, Pawn, 16);
+    board->squares[49] = createPiece(White, Pawn, 17);
+    board->squares[50] = createPiece(White, Pawn, 18);
+    board->squares[51] = createPiece(White, Pawn, 19);
+    board->squares[52] = createPiece(White, Pawn, 20);
+    board->squares[53] = createPiece(White, Pawn, 21);
+    board->squares[54] = createPiece(White, Pawn, 22);
+    board->squares[55] = createPiece(White, Pawn, 23);
+    board->squares[56] = createPiece(White, Rook, 24);
+    board->squares[57] = createPiece(White, Knight, 25);
+    board->squares[58] = createPiece(White, Biship, 26);
+    board->squares[59] = createPiece(White, Queen, 27);
+    board->squares[60] = createPiece(White, King, 28);
+    board->squares[61] = createPiece(White, Biship, 29);
+    board->squares[62] = createPiece(White, Knight, 30);
+    board->squares[63] = createPiece(White, Rook, 31);
+    
+    
+}
+
+void cursorEnterCallback(GLFWwindow *window, int entered) {
+    if (entered) {
+    } else {
+        // TODO: reset drag state
+    }
+}
+
+void cursorPositionCallback(GLFWwindow *window, double posx, double posy) {
+    // printf("mouse x = %f, y = %f\n", x, y);
+    if (draggingSquare != -1) {
+        struct Piece *piece = board.squares[draggingSquare];
+        if (piece != NULL) {
+            GLfloat squareLength = 2.0 / 8.0;
+            // move the piece
+            double x = 2.0 * posx / WINDOW_WIDTH - 0.5 * squareLength;
+            double y = 2.0 - 2.0 * posy / WINDOW_HEIGHT - 0.5 * squareLength;
+            // printf("Moving piece %d to x = %f, y = %f\n", draggingSquare, x, y);
+            plotPieceXYInVertices(x, y, piece, piecesVertices);
+            glBindVertexArray(piecesVertexArrayId);
+            glBindBuffer(GL_ARRAY_BUFFER, piecesVertexBufferId);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 32 * 5 * 6, piecesVertices, GL_DYNAMIC_DRAW);
+        }
+    }
+}
+
+void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifiers) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        double posx, posy;
+        glfwGetCursorPos(window, &posx, &posy);
+        int column = 8.0 * posx / WINDOW_WIDTH;
+        int row = 8.0 * posy / WINDOW_HEIGHT;
+        int boardPos = row * 8 + column;
+        if (action == GLFW_PRESS) {
+            printf("Start drag from x = %f, y = %f, row = %d, column = %d\n", posx, posy, row, column);
+            draggingSquare = boardPos;
+        } else { // action == GLFW_RELEASE
+            // Find new position for piece
+            struct Piece *piece = board.squares[draggingSquare];
+            struct Piece *replacedPiece = board.squares[boardPos];
+            if (replacedPiece != NULL && replacedPiece != piece) {
+                // clean up
+                plotPieceXYInVertices(-1.0, -1.0, replacedPiece, piecesVertices);
+            }
+            board.squares[draggingSquare] = NULL;
+            board.squares[boardPos] = piece;
+            plotPieceInVertices(boardPos, piece, piecesVertices);
+            
+            glBindVertexArray(piecesVertexArrayId);
+            glBindBuffer(GL_ARRAY_BUFFER, piecesVertexBufferId);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 32 * 5 * 6, piecesVertices, GL_DYNAMIC_DRAW);
+        
+            draggingSquare = -1;
+        }
+    }
 }
 
 int appMainLoop() {
-    struct Board board;
-    
     initBoard(&board);
     
     GLFWwindow* window = NULL;
@@ -235,6 +435,10 @@ int appMainLoop() {
     }
     
     glfwMakeContextCurrent(window);
+    
+    glfwSetCursorPosCallback(window, cursorPositionCallback);
+    glfwSetCursorEnterCallback(window, cursorEnterCallback);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
     
     if (glewInit() != GLEW_OK) {
         printf("glewInit failed.\n");
@@ -283,16 +487,15 @@ int appMainLoop() {
     GLint vertAttr = glGetAttribLocation(program, "vert");
     GLint vertTexCoordAttr = glGetAttribLocation(program, "vertTexCoord");
     
-    GLuint boardVertexArrayId = setupBoard();
+    boardVertexArrayId = setupBoard();
     glEnableVertexAttribArray(vertAttr);
     glVertexAttribPointer(vertAttr, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), NULL);
     glEnableVertexAttribArray(vertTexCoordAttr);
     glVertexAttribPointer(vertTexCoordAttr, 2, GL_FLOAT, GL_TRUE, 5 * sizeof(GLfloat), (const GLvoid*)(3 * sizeof(GLfloat)));
     
-    GLfloat piecesVertices[32 * 5 * 6];
     GLuint numPieces = 1;
         
-    GLuint piecesVertexArrayId = setupPieces(piecesVertices);
+    setupPieces(piecesVertices, &board, &piecesVertexArrayId, &piecesVertexBufferId);
     
     glEnableVertexAttribArray(vertAttr);
     glVertexAttribPointer(vertAttr, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), NULL);
@@ -311,7 +514,7 @@ int appMainLoop() {
         glDrawArrays(GL_TRIANGLES, 0, 64 * 6);
         
         glBindVertexArray(piecesVertexArrayId);
-        glDrawArrays(GL_TRIANGLES, 0, 1 * 6);
+        glDrawArrays(GL_TRIANGLES, 0, 32 * 6);
         
         glfwSwapBuffers(window);
     }
