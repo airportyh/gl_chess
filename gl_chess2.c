@@ -49,10 +49,6 @@ struct BoardRender {
     GLfloat y;
     GLfloat size;
     struct SpriteRender pieceVertices[32];
-    GLuint boardVertexArrayId;
-    GLuint boardVertexBufferId;
-    GLuint piecesVertexArrayId;
-    GLuint piecesVertexBufferId;
 };
 
 struct BoardData {
@@ -79,6 +75,10 @@ struct GLSettings {
     GLuint boardTexUniformId;
     GLuint piecesTextureId;
     GLuint piecesTexUniformId;
+    GLuint boardVertexArrayId;
+    GLuint boardVertexBufferId;
+    GLuint piecesVertexArrayId;
+    GLuint piecesVertexBufferId;
 };
 
 struct BoardData *mainBoard = NULL;
@@ -204,18 +204,17 @@ void initBoard(struct Board *board) {
 }
 
 void initBuffers(
-    struct GLSettings *glSettings,
-    struct BoardRender *boardRender) {
+    struct GLSettings *glSettings) {
     GLuint piecesProgram = glSettings->piecesProgram;
     GLuint boardProgram = glSettings->boardProgram;
         
     // Init pieces vertex array and vertex buffer
-    glGenVertexArrays(1, &boardRender->piecesVertexArrayId);
-    glBindVertexArray(boardRender->piecesVertexArrayId);
-    printf("Generated vertex array for pieces %d\n", boardRender->piecesVertexArrayId);
-    glGenBuffers(1, &boardRender->piecesVertexBufferId);
-    glBindBuffer(GL_ARRAY_BUFFER, boardRender->piecesVertexBufferId);
-    printf("Generated vertex buffer for pieces %d\n", boardRender->piecesVertexBufferId);
+    glGenVertexArrays(1, &glSettings->piecesVertexArrayId);
+    glBindVertexArray(glSettings->piecesVertexArrayId);
+    printf("Generated vertex array for pieces %d\n", glSettings->piecesVertexArrayId);
+    glGenBuffers(1, &glSettings->piecesVertexBufferId);
+    glBindBuffer(GL_ARRAY_BUFFER, glSettings->piecesVertexBufferId);
+    printf("Generated vertex buffer for pieces %d\n", glSettings->piecesVertexBufferId);
 
     GLint vertexAttr = glGetAttribLocation(piecesProgram, "vertex");
     GLint spriteTypeAttr = glGetAttribLocation(piecesProgram, "spriteType");
@@ -229,10 +228,10 @@ void initBuffers(
     glVertexAttribPointer(sizeAttr, 1, GL_FLOAT, GL_FALSE, sizeof(struct SpriteRender), (const GLvoid*)(2 * sizeof(GLfloat) + sizeof(GLint)));
 
     // Init board vertex array and vertex buffer
-    glGenVertexArrays(1, &boardRender->boardVertexArrayId);
-    glBindVertexArray(boardRender->boardVertexArrayId);
-    glGenBuffers(1, &boardRender->boardVertexBufferId);
-    glBindBuffer(GL_ARRAY_BUFFER, boardRender->boardVertexBufferId);
+    glGenVertexArrays(1, &glSettings->boardVertexArrayId);
+    glBindVertexArray(glSettings->boardVertexArrayId);
+    glGenBuffers(1, &glSettings->boardVertexBufferId);
+    glBindBuffer(GL_ARRAY_BUFFER, glSettings->boardVertexBufferId);
 
     GLint boardVertexAttr = glGetAttribLocation(boardProgram, "vertex");
     GLint boardSizeAttr = glGetAttribLocation(boardProgram, "size");
@@ -244,14 +243,14 @@ void initBuffers(
         
 }
 
-void updatePiecesBuffer(struct BoardRender *boardRender) {
-    glBindBuffer(GL_ARRAY_BUFFER, mainBoard->boardRender.piecesVertexBufferId);
+void updatePiecesBuffer(struct GLSettings *glSettings ,struct BoardRender *boardRender) {
+    glBindBuffer(GL_ARRAY_BUFFER, glSettings->piecesVertexBufferId);
     glBufferData(GL_ARRAY_BUFFER, 32 * sizeof(struct SpriteRender), boardRender->pieceVertices, GL_STATIC_DRAW);
     
 }
 
-void updateBoardBuffer(struct BoardRender *boardRender) {
-    glBindBuffer(GL_ARRAY_BUFFER, mainBoard->boardRender.boardVertexBufferId);
+void updateBoardBuffer(struct GLSettings *glSettings, struct BoardRender *boardRender) {
+    glBindBuffer(GL_ARRAY_BUFFER, glSettings->boardVertexBufferId);
     glBufferData(GL_ARRAY_BUFFER, 3 * sizeof(GLfloat), boardRender, GL_STATIC_DRAW);
 }
 
@@ -340,14 +339,14 @@ void renderBoard(struct BoardData *boardData, struct GLSettings *glSettings) {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, glSettings->boardTextureId);
     glUniform1i(glSettings->boardTexUniformId, 0);
-    glBindVertexArray(boardData->boardRender.boardVertexArrayId);
+    glBindVertexArray(glSettings->boardVertexArrayId);
     glDrawArrays(GL_POINTS, 0, 1);
     
     glUseProgram(glSettings->piecesProgram);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, glSettings->piecesTextureId);
     glUniform1i(glSettings->piecesTexUniformId, 0);
-    glBindVertexArray(boardData->boardRender.piecesVertexArrayId);
+    glBindVertexArray(glSettings->piecesVertexArrayId);
     glDrawArrays(GL_POINTS, 0, 32);
 }
 
@@ -372,7 +371,7 @@ void cursorPositionCallback(GLFWwindow *window, double posx, double posy) {
             struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
             sr->x = x;
             sr->y = y;
-            updatePiecesBuffer(&mainBoard->boardRender);
+            updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
         }
     }
 }
@@ -389,6 +388,55 @@ void printTimeline(struct TimelineNode *timeline, int level) {
     }
 }
 
+void addToTimeline(struct Board *board) {
+    
+    // Make copy of board and add to timeline before making the move
+    printf("Adding new timestamp to timeline\n");
+    
+    struct BoardData *newBoardData = malloc(sizeof(struct BoardData));
+    struct TimelineNode *newTimelineNode = malloc(sizeof(struct TimelineNode));
+    newTimelineNode->state = newBoardData;
+    newTimelineNode->children = NULL;
+    memcpy(&newBoardData->board, board, sizeof(struct Board));
+    
+    if (timeline == NULL) {
+        timeline = newTimelineNode;
+    }
+    
+    if (currTimelineNode != NULL) {
+        if (currTimelineNode->children == NULL) {
+            struct TimelineListNode *children = malloc(sizeof(struct TimelineListNode));
+            children->data = newTimelineNode;
+            children->next = NULL;
+            currTimelineNode->children = children;
+        } else {
+            struct TimelineListNode *node = currTimelineNode->children;
+            while (node->next != NULL) {
+                node = node->next;
+            }
+            node->next = malloc(sizeof(struct TimelineListNode));
+            node->next->data = newTimelineNode;
+            node->next->next = NULL;
+        }
+        
+        struct TimelineNode* prevTimelineNode = currTimelineNode;
+        currTimelineNode = newTimelineNode;
+        currTimelineNode->state->boardRender.x = prevTimelineNode->state->boardRender.x + 0.5 + 0.02;
+        currTimelineNode->state->boardRender.y = -2;
+        currTimelineNode->state->boardRender.size = 0.5;
+    } else {
+        currTimelineNode = newTimelineNode;
+        currTimelineNode->state->boardRender.x = -2;
+        currTimelineNode->state->boardRender.y = -2;
+        currTimelineNode->state->boardRender.size = 0.5;
+    }
+    
+    populatePieceVertices(currTimelineNode->state);
+    
+    printf("Added new timestamp to timeline\n");
+    printTimeline(timeline, 0);
+}
+
 void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifiers) {
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         double posx, posy;
@@ -401,6 +449,9 @@ void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifie
             printf("Start drag from row = %d, column = %d, boardPos = %d\n", row, column, boardPos);
             draggingSquare = boardPos;
         } else { // action == GLFW_RELEASE
+            
+            addToTimeline(&mainBoard->board);
+            
             // Find new position for piece
             
             struct Piece *piece = mainBoard->board.squares[draggingSquare];
@@ -419,56 +470,30 @@ void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifie
             GLfloat x = mainBoard->boardRender.x + squareLength * (boardPos % 8);
             GLfloat y = mainBoard->boardRender.y + squareLength * (7 - floor(boardPos / 8));
             
-            // Make copy of board and add to timeline before making the move
-            printf("Adding new timestamp to timeline\n");
-            
-            
-            struct BoardData *newBoardData = malloc(sizeof(struct BoardData));
-            struct TimelineNode *newTimelineNode = malloc(sizeof(struct TimelineNode));
-            newTimelineNode->state = newBoardData;
-            newTimelineNode->children = NULL;
-            memcpy(&newBoardData->board, &mainBoard->board, sizeof(struct Board));
-            
-            if (currTimelineNode != NULL) {
-                if (currTimelineNode->children == NULL) {
-                    struct TimelineListNode *children = malloc(sizeof(struct TimelineListNode));
-                    children->data = newTimelineNode;
-                    children->next = NULL;
-                    currTimelineNode->children = children;
-                } else {
-                    struct TimelineListNode *node = currTimelineNode->children;
-                    while (node->next != NULL) {
-                        node = node->next;
-                    }
-                    node->next = malloc(sizeof(struct TimelineListNode));
-                    node->next->data = newTimelineNode;
-                    node->next->next = NULL;
-                }
-            }
-            
-            if (timeline == NULL) {
-                timeline = newTimelineNode;
-            }
-            currTimelineNode = newTimelineNode;
-            
-            currTimelineNode->state->boardRender.x = -2;
-            currTimelineNode->state->boardRender.y = -2;
-            currTimelineNode->state->boardRender.size = 0.5;
-            
-            // populatePieceVertices(currTimelineNode->state);
-            // initBuffers2(&glSettings, &currTimelineNode->state->boardRender);
-            // updateBoardBuffer(&currTimelineNode->state->boardRender);
-            // updatePiecesBuffer(&currTimelineNode->state->boardRender);
-            
-            printf("Added new timestamp to timeline\n");
-            printTimeline(timeline, 0);
-            
             sr->x = x;
             sr->y = y;
             
-            updatePiecesBuffer(&mainBoard->boardRender);
+            updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
             
             draggingSquare = -1;
+        }
+    }
+}
+
+void renderTimeline(struct TimelineNode *node) {
+    if (node == NULL) {
+        return;
+    }
+    
+    updateBoardBuffer(&glSettings, &node->state->boardRender);
+    updatePiecesBuffer(&glSettings, &node->state->boardRender);
+    renderBoard(node->state, &glSettings);
+    
+    if (node->children) {
+        struct TimelineListNode *children = node->children;
+        while (children != NULL) {
+            renderTimeline(children->data);
+            children = children->next;
         }
     }
 }
@@ -509,9 +534,9 @@ int appMainLoop() {
     displayGLVersions();
     
     initGLSettings(&glSettings);
-
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    initBuffers(&glSettings);
     
     mainBoard = malloc(sizeof(struct BoardData));
     
@@ -523,17 +548,21 @@ int appMainLoop() {
     mainBoard->boardRender.size = 2;
     
     populatePieceVertices(mainBoard);
-    initBuffers(&glSettings, &mainBoard->boardRender);
-    updateBoardBuffer(&mainBoard->boardRender);
-    updatePiecesBuffer(&mainBoard->boardRender);
+    // updateBoardBuffer(&glSettings, &mainBoard->boardRender);
+    // updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
     
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        updateBoardBuffer(&glSettings, &mainBoard->boardRender);
+        updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
         renderBoard(mainBoard, &glSettings);
         
-        if (timeline != NULL) {
-            renderBoard(timeline->state, &glSettings);
-        }
+        renderTimeline(timeline);
+        // if (timeline != NULL) {
+        //     updateBoardBuffer(&glSettings, &timeline->state->boardRender);
+        //     updatePiecesBuffer(&glSettings, &timeline->state->boardRender);
+        //     renderBoard(timeline->state, &glSettings);
+        // }
         glfwSwapBuffers(window);
     }
 
