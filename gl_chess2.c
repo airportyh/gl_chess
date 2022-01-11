@@ -9,7 +9,6 @@
 #include "stb_image.h"
 #include "errors.h"
 #include "read_file.h"
-#include "utarray.h"
 
 #define WINDOW_WIDTH 600
 #define WINDOW_HEIGHT 600
@@ -73,8 +72,19 @@ struct TimelineListNode {
     struct TimelineListNode *next;
 };
 
+struct GLSettings {
+    GLuint boardProgram;
+    GLuint piecesProgram;
+    GLuint boardTextureId;
+    GLuint boardTexUniformId;
+    GLuint piecesTextureId;
+    GLuint piecesTexUniformId;
+};
+
 struct BoardData *mainBoard = NULL;
-struct BoardTimelineNode *timeline = NULL;
+struct TimelineNode *timeline = NULL;
+struct TimelineNode *currTimelineNode = NULL;
+struct GLSettings glSettings;
 
 static int draggingSquare = -1;
 
@@ -193,73 +203,56 @@ void initBoard(struct Board *board) {
     
 }
 
-void cursorEnterCallback(GLFWwindow *window, int entered) {
-    if (entered) {
-    } else {
-        // TODO: reset drag state
-    }
+void initBuffers(
+    struct GLSettings *glSettings,
+    struct BoardRender *boardRender) {
+    GLuint piecesProgram = glSettings->piecesProgram;
+    GLuint boardProgram = glSettings->boardProgram;
+        
+    // Init pieces vertex array and vertex buffer
+    glGenVertexArrays(1, &boardRender->piecesVertexArrayId);
+    glBindVertexArray(boardRender->piecesVertexArrayId);
+    printf("Generated vertex array for pieces %d\n", boardRender->piecesVertexArrayId);
+    glGenBuffers(1, &boardRender->piecesVertexBufferId);
+    glBindBuffer(GL_ARRAY_BUFFER, boardRender->piecesVertexBufferId);
+    printf("Generated vertex buffer for pieces %d\n", boardRender->piecesVertexBufferId);
+
+    GLint vertexAttr = glGetAttribLocation(piecesProgram, "vertex");
+    GLint spriteTypeAttr = glGetAttribLocation(piecesProgram, "spriteType");
+    GLint sizeAttr = glGetAttribLocation(piecesProgram, "size");
+
+    glEnableVertexAttribArray(vertexAttr);
+    glVertexAttribPointer(vertexAttr, 2, GL_FLOAT, GL_FALSE, sizeof(struct SpriteRender), NULL);
+    glEnableVertexAttribArray(spriteTypeAttr);
+    glVertexAttribIPointer(spriteTypeAttr, 1, GL_INT, sizeof(struct SpriteRender), (const GLvoid*)(2 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(sizeAttr);
+    glVertexAttribPointer(sizeAttr, 1, GL_FLOAT, GL_FALSE, sizeof(struct SpriteRender), (const GLvoid*)(2 * sizeof(GLfloat) + sizeof(GLint)));
+
+    // Init board vertex array and vertex buffer
+    glGenVertexArrays(1, &boardRender->boardVertexArrayId);
+    glBindVertexArray(boardRender->boardVertexArrayId);
+    glGenBuffers(1, &boardRender->boardVertexBufferId);
+    glBindBuffer(GL_ARRAY_BUFFER, boardRender->boardVertexBufferId);
+
+    GLint boardVertexAttr = glGetAttribLocation(boardProgram, "vertex");
+    GLint boardSizeAttr = glGetAttribLocation(boardProgram, "size");
+
+    glEnableVertexAttribArray(boardVertexAttr);
+    glVertexAttribPointer(boardVertexAttr, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), NULL);
+    glEnableVertexAttribArray(boardSizeAttr);
+    glVertexAttribPointer(boardSizeAttr, 1, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (const GLvoid*)(2 * sizeof(GLfloat)));
+        
 }
 
-void cursorPositionCallback(GLFWwindow *window, double posx, double posy) {
-    // printf("mouse x = %f, y = %f\n", x, y);
-    if (draggingSquare != -1) {
-        struct Piece *piece = mainBoard->board.squares[draggingSquare];
-        if (piece != NULL) {
-            GLfloat squareLength = 2.0 / 8.0;
-            // move the piece
-            double x = (posx - WINDOW_WIDTH / 2) * 4 / WINDOW_WIDTH - 0.5 * squareLength;
-            double y = - (posy - WINDOW_HEIGHT / 2) * 4 / WINDOW_HEIGHT - 0.5 * squareLength;
-            // printf("Moving piece %d to x = %f, y = %f\n", draggingSquare, x, y);
-            struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
-            sr->x = x;
-            sr->y = y;
-            glBindVertexArray(mainBoard->boardRender.piecesVertexArrayId);
-            glBindBuffer(GL_ARRAY_BUFFER, mainBoard->boardRender.piecesVertexBufferId);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 32 * 5 * 6, mainBoard->boardRender.pieceVertices, GL_DYNAMIC_DRAW);
-        }
-    }
+void updatePiecesBuffer(struct BoardRender *boardRender) {
+    glBindBuffer(GL_ARRAY_BUFFER, mainBoard->boardRender.piecesVertexBufferId);
+    glBufferData(GL_ARRAY_BUFFER, 32 * sizeof(struct SpriteRender), boardRender->pieceVertices, GL_STATIC_DRAW);
+    
 }
 
-void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifiers) {
-    if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        double posx, posy;
-        glfwGetCursorPos(window, &posx, &posy);
-        printf("x = %f, y = %f\n", posx, posy);
-        int column = 4 + 8.0 * (posx - WINDOW_WIDTH / 2) / (WINDOW_WIDTH / 2);
-        int row = 4 + 8.0 * (posy - WINDOW_HEIGHT / 2) / (WINDOW_HEIGHT / 2) ;
-        int boardPos = row * 8 + column;
-        if (action == GLFW_PRESS) {
-            printf("Start drag from row = %d, column = %d, boardPos = %d\n", row, column, boardPos);
-            draggingSquare = boardPos;
-        } else { // action == GLFW_RELEASE
-            // Find new position for piece
-            
-            struct Piece *piece = mainBoard->board.squares[draggingSquare];
-            struct Piece *replacedPiece = mainBoard->board.squares[boardPos];
-            if (replacedPiece != NULL && replacedPiece != piece) {
-                // clean up
-                struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex];
-                sr->x = -1.0;
-                sr->y = -1.0;
-            }
-            mainBoard->board.squares[draggingSquare] = NULL;
-            mainBoard->board.squares[boardPos] = piece;
-            
-            struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
-            GLfloat squareLength = mainBoard->boardRender.size / 8;
-            GLfloat x = mainBoard->boardRender.x + squareLength * (boardPos % 8);
-            GLfloat y = mainBoard->boardRender.y + squareLength * (7 - floor(boardPos / 8));
-            
-            sr->x = x;
-            sr->y = y;
-            
-            glBindVertexArray(mainBoard->boardRender.piecesVertexArrayId);
-            glBindBuffer(GL_ARRAY_BUFFER, mainBoard->boardRender.piecesVertexBufferId);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 32 * 5 * 6, mainBoard->boardRender.pieceVertices, GL_DYNAMIC_DRAW);
-            
-            draggingSquare = -1;
-        }
-    }
+void updateBoardBuffer(struct BoardRender *boardRender) {
+    glBindBuffer(GL_ARRAY_BUFFER, mainBoard->boardRender.boardVertexBufferId);
+    glBufferData(GL_ARRAY_BUFFER, 3 * sizeof(GLfloat), boardRender, GL_STATIC_DRAW);
 }
 
 int compileProgram(char *vertexShaderFile, char *geometryShaderFile, char *fragmentShaderFile) {
@@ -312,48 +305,11 @@ int loadTexture(char *imageFile) {
     return textureId;
 }
 
-void initBoardRender(
-    GLuint piecesProgram, 
-    GLuint boardProgram, 
-    struct BoardRender *boardRender) {
-        
-    // Init pieces vertex array and vertex buffer
-    glGenVertexArrays(1, &boardRender->piecesVertexArrayId);
-    glBindVertexArray(boardRender->piecesVertexArrayId);
-    glGenBuffers(1, &boardRender->piecesVertexBufferId);
-    glBindBuffer(GL_ARRAY_BUFFER, boardRender->piecesVertexBufferId);
-
-    GLint vertexAttr = glGetAttribLocation(piecesProgram, "vertex");
-    GLint spriteTypeAttr = glGetAttribLocation(piecesProgram, "spriteType");
-    GLint sizeAttr = glGetAttribLocation(piecesProgram, "size");
-
-    glEnableVertexAttribArray(vertexAttr);
-    glVertexAttribPointer(vertexAttr, 2, GL_FLOAT, GL_FALSE, sizeof(struct SpriteRender), NULL);
-    glEnableVertexAttribArray(spriteTypeAttr);
-    glVertexAttribIPointer(spriteTypeAttr, 1, GL_INT, sizeof(struct SpriteRender), (const GLvoid*)(2 * sizeof(GLfloat)));
-    glEnableVertexAttribArray(sizeAttr);
-    glVertexAttribPointer(sizeAttr, 1, GL_FLOAT, GL_FALSE, sizeof(struct SpriteRender), (const GLvoid*)(2 * sizeof(GLfloat) + sizeof(GLint)));
-
-
-    // Init board vertex array and vertex buffer
-    glGenVertexArrays(1, &boardRender->boardVertexArrayId);
-    glBindVertexArray(boardRender->boardVertexArrayId);
-    glGenBuffers(1, &boardRender->boardVertexBufferId);
-    glBindBuffer(GL_ARRAY_BUFFER, boardRender->boardVertexBufferId);
-
-    GLint boardVertexAttr = glGetAttribLocation(boardProgram, "vertex");
-    GLint boardSizeAttr = glGetAttribLocation(boardProgram, "size");
-
-    glEnableVertexAttribArray(boardVertexAttr);
-    glVertexAttribPointer(boardVertexAttr, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), NULL);
-    glEnableVertexAttribArray(boardSizeAttr);
-    glVertexAttribPointer(boardSizeAttr, 1, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (const GLvoid*)(2 * sizeof(GLfloat)));
-        
-}
-
-void populateBoardRenderData(struct Board *board, struct BoardRender *boardRender)
+void populatePieceVertices(struct BoardData *boardData)
 // Assumes boardRender's x, y, and size are pre-specified
 {
+    struct Board *board = &boardData->board;
+    struct BoardRender *boardRender = &boardData->boardRender;
     GLfloat left = boardRender->x;
     GLfloat top = boardRender->y;
     GLfloat squareLength = boardRender->size / 8;
@@ -366,6 +322,153 @@ void populateBoardRenderData(struct Board *board, struct BoardRender *boardRende
             boardRender->pieceVertices[piece->vertexArrayIndex].y = y;
             boardRender->pieceVertices[piece->vertexArrayIndex].spriteType = piece->type;
             boardRender->pieceVertices[piece->vertexArrayIndex].size = squareLength;
+        }
+    }
+}
+
+void initGLSettings(struct GLSettings *glSettings) {
+    glSettings->piecesProgram = compileProgram("vertex_shader2.glsl", "geometry_shader2.glsl", "fragment_shader2.glsl");
+    glSettings->boardProgram = compileProgram("board_vertex_shader.glsl", "board_geometry_shader.glsl", "fragment_shader2.glsl");
+    glSettings->piecesTextureId = loadTexture("sprite.png");
+    glSettings->piecesTexUniformId = glGetUniformLocation(glSettings->piecesProgram, "tex");
+    glSettings->boardTextureId = loadTexture("board.png");
+    glSettings->boardTexUniformId = glGetUniformLocation(glSettings->boardProgram, "tex");
+}
+
+void renderBoard(struct BoardData *boardData, struct GLSettings *glSettings) {
+    glUseProgram(glSettings->boardProgram);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, glSettings->boardTextureId);
+    glUniform1i(glSettings->boardTexUniformId, 0);
+    glBindVertexArray(boardData->boardRender.boardVertexArrayId);
+    glDrawArrays(GL_POINTS, 0, 1);
+    
+    glUseProgram(glSettings->piecesProgram);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, glSettings->piecesTextureId);
+    glUniform1i(glSettings->piecesTexUniformId, 0);
+    glBindVertexArray(boardData->boardRender.piecesVertexArrayId);
+    glDrawArrays(GL_POINTS, 0, 32);
+}
+
+
+void cursorEnterCallback(GLFWwindow *window, int entered) {
+    if (entered) {
+    } else {
+        // TODO: reset drag state
+    }
+}
+
+void cursorPositionCallback(GLFWwindow *window, double posx, double posy) {
+    // printf("mouse x = %f, y = %f\n", x, y);
+    if (draggingSquare != -1) {
+        struct Piece *piece = mainBoard->board.squares[draggingSquare];
+        if (piece != NULL) {
+            GLfloat squareLength = 2.0 / 8.0;
+            // move the piece
+            double x = (posx - WINDOW_WIDTH / 2) * 4 / WINDOW_WIDTH - 0.5 * squareLength;
+            double y = - (posy - WINDOW_HEIGHT / 2) * 4 / WINDOW_HEIGHT - 0.5 * squareLength;
+            // printf("Moving piece %d to x = %f, y = %f\n", draggingSquare, x, y);
+            struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
+            sr->x = x;
+            sr->y = y;
+            updatePiecesBuffer(&mainBoard->boardRender);
+        }
+    }
+}
+
+void printTimeline(struct TimelineNode *timeline, int level) {
+    for (int i = 0; i < level; i++) {
+        printf("  ");
+    }
+    printf("printTimeline\n");
+    struct TimelineListNode *children = timeline->children;
+    while (children != NULL) {
+        printTimeline(children->data, level + 1);
+        children = children->next;
+    }
+}
+
+void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifiers) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        double posx, posy;
+        glfwGetCursorPos(window, &posx, &posy);
+        printf("x = %f, y = %f\n", posx, posy);
+        int column = 4 + 8.0 * (posx - WINDOW_WIDTH / 2) / (WINDOW_WIDTH / 2);
+        int row = 4 + 8.0 * (posy - WINDOW_HEIGHT / 2) / (WINDOW_HEIGHT / 2) ;
+        int boardPos = row * 8 + column;
+        if (action == GLFW_PRESS) {
+            printf("Start drag from row = %d, column = %d, boardPos = %d\n", row, column, boardPos);
+            draggingSquare = boardPos;
+        } else { // action == GLFW_RELEASE
+            // Find new position for piece
+            
+            struct Piece *piece = mainBoard->board.squares[draggingSquare];
+            struct Piece *replacedPiece = mainBoard->board.squares[boardPos];
+            if (replacedPiece != NULL && replacedPiece != piece) {
+                // clean up
+                struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex];
+                sr->x = -1.0;
+                sr->y = -1.0;
+            }
+            mainBoard->board.squares[draggingSquare] = NULL;
+            mainBoard->board.squares[boardPos] = piece;
+            
+            struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
+            GLfloat squareLength = mainBoard->boardRender.size / 8;
+            GLfloat x = mainBoard->boardRender.x + squareLength * (boardPos % 8);
+            GLfloat y = mainBoard->boardRender.y + squareLength * (7 - floor(boardPos / 8));
+            
+            // Make copy of board and add to timeline before making the move
+            printf("Adding new timestamp to timeline\n");
+            
+            
+            struct BoardData *newBoardData = malloc(sizeof(struct BoardData));
+            struct TimelineNode *newTimelineNode = malloc(sizeof(struct TimelineNode));
+            newTimelineNode->state = newBoardData;
+            newTimelineNode->children = NULL;
+            memcpy(&newBoardData->board, &mainBoard->board, sizeof(struct Board));
+            
+            if (currTimelineNode != NULL) {
+                if (currTimelineNode->children == NULL) {
+                    struct TimelineListNode *children = malloc(sizeof(struct TimelineListNode));
+                    children->data = newTimelineNode;
+                    children->next = NULL;
+                    currTimelineNode->children = children;
+                } else {
+                    struct TimelineListNode *node = currTimelineNode->children;
+                    while (node->next != NULL) {
+                        node = node->next;
+                    }
+                    node->next = malloc(sizeof(struct TimelineListNode));
+                    node->next->data = newTimelineNode;
+                    node->next->next = NULL;
+                }
+            }
+            
+            if (timeline == NULL) {
+                timeline = newTimelineNode;
+            }
+            currTimelineNode = newTimelineNode;
+            
+            currTimelineNode->state->boardRender.x = -2;
+            currTimelineNode->state->boardRender.y = -2;
+            currTimelineNode->state->boardRender.size = 0.5;
+            
+            // populatePieceVertices(currTimelineNode->state);
+            // initBuffers2(&glSettings, &currTimelineNode->state->boardRender);
+            // updateBoardBuffer(&currTimelineNode->state->boardRender);
+            // updatePiecesBuffer(&currTimelineNode->state->boardRender);
+            
+            printf("Added new timestamp to timeline\n");
+            printTimeline(timeline, 0);
+            
+            sr->x = x;
+            sr->y = y;
+            
+            updatePiecesBuffer(&mainBoard->boardRender);
+            
+            draggingSquare = -1;
         }
     }
 }
@@ -405,52 +508,32 @@ int appMainLoop() {
     
     displayGLVersions();
     
-    GLuint piecesProgram = compileProgram("vertex_shader2.glsl", "geometry_shader2.glsl", "fragment_shader2.glsl");
-    GLuint boardProgram = compileProgram("board_vertex_shader.glsl", "board_geometry_shader.glsl", "fragment_shader2.glsl");
-    
+    initGLSettings(&glSettings);
+
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    
-    GLuint piecesTextureId = loadTexture("sprite.png");
-    GLuint piecesTexUniformId = glGetUniformLocation(piecesProgram, "tex");
-    GLuint boardTextureId = loadTexture("board.png");
-    GLuint boardTexUniformId = glGetUniformLocation(boardProgram, "tex");
     
     mainBoard = malloc(sizeof(struct BoardData));
     
     // Init board 1
     initBoard(&mainBoard->board);
-    initBoardRender(piecesProgram, boardProgram, &mainBoard->boardRender);
     
     mainBoard->boardRender.x = -1;
     mainBoard->boardRender.y = -1;
     mainBoard->boardRender.size = 2;
     
-    populateBoardRenderData(&mainBoard->board, &mainBoard->boardRender);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, mainBoard->boardRender.piecesVertexBufferId);
-    glBufferData(GL_ARRAY_BUFFER, 32 * sizeof(struct SpriteRender), mainBoard->boardRender.pieceVertices, GL_STATIC_DRAW);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, mainBoard->boardRender.boardVertexBufferId);
-    glBufferData(GL_ARRAY_BUFFER, 3 * sizeof(GLfloat), &mainBoard->boardRender, GL_STATIC_DRAW);
+    populatePieceVertices(mainBoard);
+    initBuffers(&glSettings, &mainBoard->boardRender);
+    updateBoardBuffer(&mainBoard->boardRender);
+    updatePiecesBuffer(&mainBoard->boardRender);
     
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        renderBoard(mainBoard, &glSettings);
         
-        glUseProgram(boardProgram);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, boardTextureId);
-        glUniform1i(boardTexUniformId, 0);
-        glBindVertexArray(mainBoard->boardRender.boardVertexArrayId);
-        glDrawArrays(GL_POINTS, 0, 1);
-        
-        glUseProgram(piecesProgram);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, piecesTextureId);
-        glUniform1i(piecesTexUniformId, 0);
-        glBindVertexArray(mainBoard->boardRender.piecesVertexArrayId);
-        glDrawArrays(GL_POINTS, 0, 32);
-        
+        if (timeline != NULL) {
+            renderBoard(timeline->state, &glSettings);
+        }
         glfwSwapBuffers(window);
     }
 
