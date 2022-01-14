@@ -67,6 +67,7 @@ struct TimelineThumbnail {
 struct GLSettings {
     GLuint boardProgram;
     GLuint piecesProgram;
+    GLuint timeMarkerProgram;
     GLuint boardTextureId;
     GLuint boardTexUniformId;
     GLuint piecesTextureId;
@@ -75,6 +76,8 @@ struct GLSettings {
     GLuint boardVertexBufferId;
     GLuint piecesVertexArrayId;
     GLuint piecesVertexBufferId;
+    GLuint timeMarkerVertexArrayId;
+    GLuint timeMarkerBufferId;
 };
 
 struct BoardData *mainBoard = NULL;
@@ -86,6 +89,7 @@ struct GLSettings glSettings;
 UT_array *timeline = NULL;
 UT_array *timelineThumbnails = NULL;
 int currentTimestamp = 0;
+GLfloat timeMarkerVertices[8];
 int draggingSquare = -1;
 
 void displayGLVersions() {
@@ -211,15 +215,12 @@ void initBuffers(
     // Init pieces vertex array and vertex buffer
     glGenVertexArrays(1, &glSettings->piecesVertexArrayId);
     glBindVertexArray(glSettings->piecesVertexArrayId);
-    printf("Generated vertex array for pieces %d\n", glSettings->piecesVertexArrayId);
     glGenBuffers(1, &glSettings->piecesVertexBufferId);
     glBindBuffer(GL_ARRAY_BUFFER, glSettings->piecesVertexBufferId);
-    printf("Generated vertex buffer for pieces %d\n", glSettings->piecesVertexBufferId);
-
+    
     GLint vertexAttr = glGetAttribLocation(piecesProgram, "vertex");
     GLint spriteTypeAttr = glGetAttribLocation(piecesProgram, "spriteType");
     GLint sizeAttr = glGetAttribLocation(piecesProgram, "size");
-
     glEnableVertexAttribArray(vertexAttr);
     glVertexAttribPointer(vertexAttr, 2, GL_FLOAT, GL_FALSE, sizeof(struct SpriteRender), NULL);
     glEnableVertexAttribArray(spriteTypeAttr);
@@ -235,12 +236,20 @@ void initBuffers(
 
     GLint boardVertexAttr = glGetAttribLocation(boardProgram, "vertex");
     GLint boardSizeAttr = glGetAttribLocation(boardProgram, "size");
-
     glEnableVertexAttribArray(boardVertexAttr);
     glVertexAttribPointer(boardVertexAttr, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), NULL);
     glEnableVertexAttribArray(boardSizeAttr);
     glVertexAttribPointer(boardSizeAttr, 1, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (const GLvoid*)(2 * sizeof(GLfloat)));
-        
+    
+    // Init time marker vertex array and vertex buffer
+    glGenVertexArrays(1, &glSettings->timeMarkerVertexArrayId);
+    glBindVertexArray(glSettings->timeMarkerVertexArrayId);
+    glGenBuffers(1, &glSettings->timeMarkerBufferId);
+    glBindBuffer(GL_ARRAY_BUFFER, glSettings->timeMarkerBufferId);
+    
+    GLint posAttr = glGetAttribLocation(glSettings->timeMarkerProgram, "pos");
+    glEnableVertexAttribArray(posAttr);
+    glVertexAttribPointer(posAttr, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(GLfloat), NULL);
 }
 
 void updatePiecesBuffer(struct GLSettings *glSettings ,struct BoardRender *boardRender) {
@@ -262,7 +271,7 @@ int compileProgram(char *vertexShaderFile, char *geometryShaderFile, char *fragm
     CALL(compileShader(vertexShaderSource, GL_VERTEX_SHADER, &vertexShaderId));
     glAttachShader(program, vertexShaderId);
     
-    if (geometryShaderFile) {
+    if (geometryShaderFile) { // Geometry shader is optional
         char *geometryShaderSource;
         CALL(readFile(geometryShaderFile, &geometryShaderSource));
         GLuint geometryShaderId;
@@ -309,6 +318,11 @@ void populatePieceVertices(struct Board *board, struct BoardRender *boardRender)
     GLfloat left = boardRender->x;
     GLfloat top = boardRender->y;
     GLfloat squareLength = boardRender->size / 8;
+    for (int i = 0; i < 32; i++) {
+        boardRender->pieceVertices[i].x = -1;
+        boardRender->pieceVertices[i].y = -1;
+    }
+    
     for (int i = 0; i < 64; i++) {
         struct Piece *piece = board->squares[i];
         if (piece != NULL) {
@@ -325,6 +339,7 @@ void populatePieceVertices(struct Board *board, struct BoardRender *boardRender)
 void initGLSettings(struct GLSettings *glSettings) {
     glSettings->piecesProgram = compileProgram("shaders/piece_vertex_shader.glsl", "shaders/piece_geometry_shader.glsl", "shaders/common_fragment_shader.glsl");
     glSettings->boardProgram = compileProgram("shaders/board_vertex_shader.glsl", "shaders/board_geometry_shader.glsl", "shaders/common_fragment_shader.glsl");
+    glSettings->timeMarkerProgram = compileProgram("shaders/time_marker_vertex_shader.glsl", NULL, "shaders/time_marker_fragment_shader.glsl");
     glSettings->piecesTextureId = loadTexture("sprite.png");
     glSettings->piecesTexUniformId = glGetUniformLocation(glSettings->piecesProgram, "tex");
     glSettings->boardTextureId = loadTexture("board.png");
@@ -346,7 +361,6 @@ void renderBoard(struct GLSettings *glSettings) {
     glBindVertexArray(glSettings->piecesVertexArrayId);
     glDrawArrays(GL_POINTS, 0, 32);
 }
-
 
 void cursorEnterCallback(GLFWwindow *window, int entered) {
     if (entered) {
@@ -395,7 +409,7 @@ void updateTimelineThumbnails() {
         // printf("Only rendering some snapshots on timeline\n");
         utarray_clear(timelineThumbnails);
         for (int i = 0; i < maxThumbnails; i++) {
-            int index = floor(((float)i / maxThumbnails) * length);
+            int index = round(((float)i / maxThumbnails) * length);
             struct BoardRender boardRender;
             boardRender.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
             boardRender.y = -2;
@@ -411,6 +425,35 @@ void addToTimeline(struct Board *board) {
     utarray_push_back(timeline, board);
     updateTimelineThumbnails();
     currentTimestamp = utarray_len(timeline) - 1;
+}
+
+void renderTimeline() {
+    int length = utarray_len(timelineThumbnails);
+    for (int i = 0; i < length; i++) {
+        struct BoardRender *boardRender = utarray_eltptr(timelineThumbnails, i);
+        updateBoardBuffer(&glSettings, boardRender);
+        updatePiecesBuffer(&glSettings, boardRender);
+        renderBoard(&glSettings);
+    }
+}
+
+void renderTimeMarker() {
+    glUseProgram(glSettings.timeMarkerProgram);
+    int timelineLength = utarray_len(timeline);
+    int maxThumbnails = 4.0 / (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP);
+    GLfloat totalWidth = (
+        timelineLength >= maxThumbnails ? 2.0 : timelineLength * (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) / 2
+    );
+    GLfloat x = totalWidth * (((float)currentTimestamp + 1.0) / (float)timelineLength) - 1.0;
+    // printf("totalWidth = %f\n", totalWidth);
+    timeMarkerVertices[0] = x;
+    timeMarkerVertices[1] = -0.76;
+    timeMarkerVertices[2] = x;
+    timeMarkerVertices[3] = -1.0;
+    glBindBuffer(GL_ARRAY_BUFFER, glSettings.timeMarkerBufferId);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(timeMarkerVertices), timeMarkerVertices, GL_STATIC_DRAW);
+    glBindVertexArray(glSettings.timeMarkerVertexArrayId);
+    glDrawArrays(GL_LINES, 0, 2);
 }
 
 void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifiers) {
@@ -457,13 +500,25 @@ void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifie
     }
 }
 
-void renderTimeline() {
-    int length = utarray_len(timelineThumbnails);
-    for (int i = 0; i < length; i++) {
-        struct BoardRender *boardRender = utarray_eltptr(timelineThumbnails, i);
-        updateBoardBuffer(&glSettings, boardRender);
-        updatePiecesBuffer(&glSettings, boardRender);
-        renderBoard(&glSettings);
+void updateMainBoard() {
+    memcpy(&mainBoard->board, utarray_eltptr(timeline, currentTimestamp), sizeof(struct Board));
+    populatePieceVertices(&mainBoard->board, &mainBoard->boardRender);
+}
+
+void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
+        currentTimestamp--;
+        if (currentTimestamp < 0) {
+            currentTimestamp = utarray_len(timeline) - 1;
+        }
+        updateMainBoard();
+    } else if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
+        currentTimestamp++;
+        if (currentTimestamp >= utarray_len(timeline)) {
+            currentTimestamp = 0;
+        }
+        updateMainBoard();
     }
 }
 
@@ -494,6 +549,7 @@ int appMainLoop() {
     glfwSetCursorPosCallback(window, cursorPositionCallback);
     glfwSetCursorEnterCallback(window, cursorEnterCallback);
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
+    glfwSetKeyCallback(window, keyCallback);
     
     if (glewInit() != GLEW_OK) {
         printf("glewInit failed.\n");
@@ -505,11 +561,11 @@ int appMainLoop() {
     initGLSettings(&glSettings);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glLineWidth(1);
     initBuffers(&glSettings);
     
     mainBoard = malloc(sizeof(struct BoardData));
     
-    // Init board 1
     initBoard(&mainBoard->board);
     
     mainBoard->boardRender.x = -1;
@@ -530,6 +586,7 @@ int appMainLoop() {
         updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
         renderBoard(&glSettings);
         renderTimeline();
+        renderTimeMarker();
         glfwSwapBuffers(window);
     }
 
