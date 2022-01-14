@@ -9,10 +9,13 @@
 #include "stb_image.h"
 #include "errors.h"
 #include "read_file.h"
+#include "utarray.h"
 
-#define WINDOW_WIDTH 600
-#define WINDOW_HEIGHT 600
+#define WINDOW_WIDTH 720
+#define WINDOW_HEIGHT 720
 #define SQUARE_LENGTH 0.25
+#define TIMELINE_THUMBNAIL_WIDTH 0.48
+#define TIMELINE_GAP 0.02
 
 enum PieceType {
     Pawn, Knight, Biship, Rook, King, Queen
@@ -56,16 +59,9 @@ struct BoardData {
     struct BoardRender boardRender;
 };
 
-// A timeline is actually a tree, because a timeline can be forked.
-// TimelineListNode then is a linked list of alternate outcomes for the next step.
-struct TimelineNode {
-    struct BoardData *state;
-    struct TimelineListNode *children;
-};
-
-struct TimelineListNode {
-    struct TimelineNode *data;
-    struct TimelineListNode *next;
+struct TimelineThumbnail {
+    struct Board *board;
+    struct BoardRender boardRender;
 };
 
 struct GLSettings {
@@ -82,9 +78,14 @@ struct GLSettings {
 };
 
 struct BoardData *mainBoard = NULL;
-struct TimelineNode *timeline = NULL;
-struct TimelineNode *currTimelineNode = NULL;
+
+UT_icd board_icd = { sizeof(struct Board), NULL, NULL, NULL };
+UT_icd board_render_icd = { sizeof(struct BoardRender), NULL, NULL, NULL };
+
 struct GLSettings glSettings;
+UT_array *timeline = NULL;
+UT_array *timelineThumbnails = NULL;
+int currentTimestamp = 0;
 
 static int draggingSquare = -1;
 
@@ -304,11 +305,9 @@ int loadTexture(char *imageFile) {
     return textureId;
 }
 
-void populatePieceVertices(struct BoardData *boardData)
+void populatePieceVertices(struct Board *board, struct BoardRender *boardRender)
 // Assumes boardRender's x, y, and size are pre-specified
 {
-    struct Board *board = &boardData->board;
-    struct BoardRender *boardRender = &boardData->boardRender;
     GLfloat left = boardRender->x;
     GLfloat top = boardRender->y;
     GLfloat squareLength = boardRender->size / 8;
@@ -334,7 +333,7 @@ void initGLSettings(struct GLSettings *glSettings) {
     glSettings->boardTexUniformId = glGetUniformLocation(glSettings->boardProgram, "tex");
 }
 
-void renderBoard(struct BoardData *boardData, struct GLSettings *glSettings) {
+void renderBoard(struct GLSettings *glSettings) {
     glUseProgram(glSettings->boardProgram);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, glSettings->boardTextureId);
@@ -376,94 +375,72 @@ void cursorPositionCallback(GLFWwindow *window, double posx, double posy) {
     }
 }
 
-void printTimeline(struct TimelineNode *timeline, int level) {
-    for (int i = 0; i < level; i++) {
-        printf("  ");
-    }
-    printf("printTimeline\n");
-    struct TimelineListNode *children = timeline->children;
-    while (children != NULL) {
-        printTimeline(children->data, level + 1);
-        children = children->next;
+void updateTimelineThumbnails() {
+    int length = utarray_len(timeline);
+    GLfloat calculatedSpace = 4.0 / length;
+    
+    int maxThumbnails = 4.0 / (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP);
+    if (length <= maxThumbnails) {
+        // printf("Rendering all snapshots on timeline\n");
+        utarray_clear(timelineThumbnails);
+        // put each snapshot on a thumbnail
+        for (int i = 0; i < length; i++) {
+            struct BoardRender boardRender;
+            boardRender.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
+            boardRender.y = -2;
+            boardRender.size = TIMELINE_THUMBNAIL_WIDTH;
+            populatePieceVertices(utarray_eltptr(timeline, i), &boardRender);
+            utarray_push_back(timelineThumbnails, &boardRender);
+            // printf("Added %d-th thumbnail to timeline thumbnails\n", i);
+        }
+    } else {
+        // printf("Only rendering some snapshots on timeline\n");
+        utarray_clear(timelineThumbnails);
+        for (int i = 0; i < maxThumbnails; i++) {
+            int index = floor(((float)i / maxThumbnails) * length);
+            struct BoardRender boardRender;
+            boardRender.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
+            boardRender.y = -2;
+            boardRender.size = TIMELINE_THUMBNAIL_WIDTH;
+            populatePieceVertices(utarray_eltptr(timeline, index), &boardRender);
+            utarray_push_back(timelineThumbnails, &boardRender);
+            // printf("Added %d-th thumbnail to timeline thumbnails\n", i);
+        }
     }
 }
 
 void addToTimeline(struct Board *board) {
-    
-    // Make copy of board and add to timeline before making the move
-    printf("Adding new timestamp to timeline\n");
-    
-    struct BoardData *newBoardData = malloc(sizeof(struct BoardData));
-    struct TimelineNode *newTimelineNode = malloc(sizeof(struct TimelineNode));
-    newTimelineNode->state = newBoardData;
-    newTimelineNode->children = NULL;
-    memcpy(&newBoardData->board, board, sizeof(struct Board));
-    
-    if (timeline == NULL) {
-        timeline = newTimelineNode;
-    }
-    
-    if (currTimelineNode != NULL) {
-        if (currTimelineNode->children == NULL) {
-            struct TimelineListNode *children = malloc(sizeof(struct TimelineListNode));
-            children->data = newTimelineNode;
-            children->next = NULL;
-            currTimelineNode->children = children;
-        } else {
-            struct TimelineListNode *node = currTimelineNode->children;
-            while (node->next != NULL) {
-                node = node->next;
-            }
-            node->next = malloc(sizeof(struct TimelineListNode));
-            node->next->data = newTimelineNode;
-            node->next->next = NULL;
-        }
-        
-        struct TimelineNode* prevTimelineNode = currTimelineNode;
-        currTimelineNode = newTimelineNode;
-        currTimelineNode->state->boardRender.x = prevTimelineNode->state->boardRender.x + 0.5 + 0.02;
-        currTimelineNode->state->boardRender.y = -2;
-        currTimelineNode->state->boardRender.size = 0.5;
-    } else {
-        currTimelineNode = newTimelineNode;
-        currTimelineNode->state->boardRender.x = -2;
-        currTimelineNode->state->boardRender.y = -2;
-        currTimelineNode->state->boardRender.size = 0.5;
-    }
-    
-    populatePieceVertices(currTimelineNode->state);
-    
-    printf("Added new timestamp to timeline\n");
-    printTimeline(timeline, 0);
+    utarray_push_back(timeline, board);
+    //printf("Added to timeline, now size %d\n", utarray_len(timeline));
+    updateTimelineThumbnails();
 }
 
 void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifiers) {
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         double posx, posy;
         glfwGetCursorPos(window, &posx, &posy);
-        printf("x = %f, y = %f\n", posx, posy);
+        // printf("x = %f, y = %f\n", posx, posy);
         int column = 4 + 8.0 * (posx - WINDOW_WIDTH / 2) / (WINDOW_WIDTH / 2);
         int row = 4 + 8.0 * (posy - WINDOW_HEIGHT / 2) / (WINDOW_HEIGHT / 2) ;
         int boardPos = row * 8 + column;
         if (action == GLFW_PRESS) {
-            printf("Start drag from row = %d, column = %d, boardPos = %d\n", row, column, boardPos);
+            // printf("Start drag from row = %d, column = %d, boardPos = %d\n", row, column, boardPos);
             draggingSquare = boardPos;
         } else { // action == GLFW_RELEASE
             
-            addToTimeline(&mainBoard->board);
-            
             // Find new position for piece
-            
             struct Piece *piece = mainBoard->board.squares[draggingSquare];
-            struct Piece *replacedPiece = mainBoard->board.squares[boardPos];
-            if (replacedPiece != NULL && replacedPiece != piece) {
-                // clean up
-                struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex];
-                sr->x = -1.0;
-                sr->y = -1.0;
+            if (boardPos != draggingSquare) {
+                struct Piece *replacedPiece = mainBoard->board.squares[boardPos];
+                if (replacedPiece != NULL && replacedPiece != piece) {
+                    // clean up
+                    struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex];
+                    sr->x = -1.0;
+                    sr->y = -1.0;
+                }
+                mainBoard->board.squares[draggingSquare] = NULL;
+                mainBoard->board.squares[boardPos] = piece;
             }
-            mainBoard->board.squares[draggingSquare] = NULL;
-            mainBoard->board.squares[boardPos] = piece;
             
             struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
             GLfloat squareLength = mainBoard->boardRender.size / 8;
@@ -474,27 +451,21 @@ void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifie
             sr->y = y;
             
             updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
-            
+            if (boardPos != draggingSquare) {
+                addToTimeline(&mainBoard->board);
+            }
             draggingSquare = -1;
         }
     }
 }
 
-void renderTimeline(struct TimelineNode *node) {
-    if (node == NULL) {
-        return;
-    }
-    
-    updateBoardBuffer(&glSettings, &node->state->boardRender);
-    updatePiecesBuffer(&glSettings, &node->state->boardRender);
-    renderBoard(node->state, &glSettings);
-    
-    if (node->children) {
-        struct TimelineListNode *children = node->children;
-        while (children != NULL) {
-            renderTimeline(children->data);
-            children = children->next;
-        }
+void renderTimeline() {
+    int length = utarray_len(timelineThumbnails);
+    for (int i = 0; i < length; i++) {
+        struct BoardRender *boardRender = utarray_eltptr(timelineThumbnails, i);
+        updateBoardBuffer(&glSettings, boardRender);
+        updatePiecesBuffer(&glSettings, boardRender);
+        renderBoard(&glSettings);
     }
 }
 
@@ -547,22 +518,20 @@ int appMainLoop() {
     mainBoard->boardRender.y = -1;
     mainBoard->boardRender.size = 2;
     
-    populatePieceVertices(mainBoard);
-    // updateBoardBuffer(&glSettings, &mainBoard->boardRender);
-    // updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
+    populatePieceVertices(&mainBoard->board, &mainBoard->boardRender);
+    
+    utarray_new(timeline, &board_icd);
+    utarray_new(timelineThumbnails, &board_render_icd);
+    
+    addToTimeline(&mainBoard->board);
     
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         updateBoardBuffer(&glSettings, &mainBoard->boardRender);
         updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
-        renderBoard(mainBoard, &glSettings);
-        
-        renderTimeline(timeline);
-        // if (timeline != NULL) {
-        //     updateBoardBuffer(&glSettings, &timeline->state->boardRender);
-        //     updatePiecesBuffer(&glSettings, &timeline->state->boardRender);
-        //     renderBoard(timeline->state, &glSettings);
-        // }
+        renderBoard(&glSettings);
+        renderTimeline();
         glfwSwapBuffers(window);
     }
 
