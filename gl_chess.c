@@ -17,6 +17,7 @@
 #define TIMELINE_THUMBNAIL_WIDTH 0.48
 #define TIMELINE_GAP 0.02
 #define ANIMATION_DURATION 50
+#define TIME_MARKER_WIDTH 0.007
 
 enum PieceType {
     Pawn, Knight, Biship, Rook, King, Queen
@@ -446,15 +447,22 @@ void renderTimeMarker() {
     } else {
         x = (2 - 2 * timeMarkerGap) * (((float)currentTimestamp) / (float)(timelineLength - 1)) - 1 + timeMarkerGap;
     }
+    
+    x -= 0.005;
     glUseProgram(glSettings.timeMarkerProgram);
     timeMarkerVertices[0] = x;
     timeMarkerVertices[1] = -0.76;
-    timeMarkerVertices[2] = x;
-    timeMarkerVertices[3] = -1.2;
+    timeMarkerVertices[2] = x + TIME_MARKER_WIDTH;
+    timeMarkerVertices[3] = -0.76;
+    timeMarkerVertices[4] = x;
+    timeMarkerVertices[5] = -1.2;
+    timeMarkerVertices[6] = x + TIME_MARKER_WIDTH;
+    timeMarkerVertices[7] = -1.2;
+    
     glBindBuffer(GL_ARRAY_BUFFER, glSettings.timeMarkerBufferId);
     glBufferData(GL_ARRAY_BUFFER, sizeof(timeMarkerVertices), timeMarkerVertices, GL_STATIC_DRAW);
     glBindVertexArray(glSettings.timeMarkerVertexArrayId);
-    glDrawArrays(GL_LINES, 0, 2);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
 void updateMainBoard() {
