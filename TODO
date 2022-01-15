@@ -10,6 +10,7 @@
 * refactor: pass board top-left as a uniform for piece rendering so that 
     piece vertices do not have to be updated when moving a board
 * get better looking pieces
+* parse and render pgn
 
 ## Done
 

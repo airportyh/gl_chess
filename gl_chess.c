@@ -490,6 +490,9 @@ void animateTimeMarkerToTimestamp(int timestamp) {
     timeMarkerAnimation.currentTick = 0;
     timeMarkerAnimation.srcX = srcX;
     timeMarkerAnimation.dstX = dstX;
+    currentTimestamp = timestamp;
+    updateMainBoard();
+    
 }
 
 void updateTimeMarkerPosition(double posx) {
