@@ -90,6 +90,7 @@ UT_array *timeline = NULL;
 UT_array *timelineThumbnails = NULL;
 int currentTimestamp = 0;
 GLfloat timeMarkerVertices[8];
+int draggingTimeMarker = 0;
 int draggingSquare = -1;
 
 void displayGLVersions() {
@@ -362,6 +363,105 @@ void renderBoard(struct GLSettings *glSettings) {
     glDrawArrays(GL_POINTS, 0, 32);
 }
 
+void updateTimelineThumbnails() {
+    int length = utarray_len(timeline);
+    
+    
+    // if (length <= maxThumbnails) {
+    //     // printf("Rendering all snapshots on timeline\n");
+    //     utarray_clear(timelineThumbnails);
+    //     // put each snapshot on a thumbnail
+    //     for (int i = 0; i < length; i++) {
+    //         struct BoardRender boardRender;
+    //         boardRender.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
+    //         boardRender.y = -2;
+    //         boardRender.size = TIMELINE_THUMBNAIL_WIDTH;
+    //         populatePieceVertices(utarray_eltptr(timeline, i), &boardRender);
+    //         utarray_push_back(timelineThumbnails, &boardRender);
+    //         // printf("Added %d-th thumbnail to timeline thumbnails\n", i);
+    //     }
+    // } else {
+        // printf("Only rendering some snapshots on timeline\n");
+    utarray_clear(timelineThumbnails);
+    if (length <= 1) {
+        return;
+    }
+    GLfloat calculatedSpace = 4.0 / length;
+    int numThumbnails = 4.0 / (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP);
+    for (int i = 0; i < numThumbnails; i++) {
+        int index = floor(((float)i / numThumbnails) * length);
+        struct BoardRender boardRender;
+        boardRender.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
+        boardRender.y = -2;
+        boardRender.size = TIMELINE_THUMBNAIL_WIDTH;
+        populatePieceVertices(utarray_eltptr(timeline, index), &boardRender);
+        utarray_push_back(timelineThumbnails, &boardRender);
+        // printf("Added %d-th thumbnail to timeline thumbnails\n", i);
+    }
+    // }
+}
+
+void addToTimeline(struct Board *board) {
+    utarray_push_back(timeline, board);
+    updateTimelineThumbnails();
+    currentTimestamp = utarray_len(timeline) - 1;
+}
+
+void renderTimeline() {
+    int length = utarray_len(timelineThumbnails);
+    if (length <= 1) {
+        return;
+    }
+    for (int i = 0; i < length; i++) {
+        struct BoardRender *boardRender = utarray_eltptr(timelineThumbnails, i);
+        updateBoardBuffer(&glSettings, boardRender);
+        updatePiecesBuffer(&glSettings, boardRender);
+        renderBoard(&glSettings);
+    }
+}
+
+
+void renderTimeMarker() {
+    int timelineLength = utarray_len(timeline);
+    if (timelineLength <= 1) {
+        return;
+    }
+    
+    glUseProgram(glSettings.timeMarkerProgram);
+    int maxThumbnails = 4.0 / (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP);
+    GLfloat timeMarkerGap = 0.0001;
+    GLfloat x = (2 - 2 * timeMarkerGap) * (((float)currentTimestamp) / (float)(timelineLength - 1)) - 1 + timeMarkerGap;
+    timeMarkerVertices[0] = x;
+    timeMarkerVertices[1] = -0.76;
+    timeMarkerVertices[2] = x;
+    timeMarkerVertices[3] = -1.2;
+    glBindBuffer(GL_ARRAY_BUFFER, glSettings.timeMarkerBufferId);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(timeMarkerVertices), timeMarkerVertices, GL_STATIC_DRAW);
+    glBindVertexArray(glSettings.timeMarkerVertexArrayId);
+    glDrawArrays(GL_LINES, 0, 2);
+}
+
+void updateMainBoard() {
+    memcpy(&mainBoard->board, utarray_eltptr(timeline, currentTimestamp), sizeof(struct Board));
+    populatePieceVertices(&mainBoard->board, &mainBoard->boardRender);
+}
+
+void updateTimeMarkerPosition(double posx) {
+    int timelineLength = utarray_len(timeline);
+    GLfloat timestampPercent = posx / WINDOW_WIDTH;
+    int newCurrentTimestamp = round((timelineLength - 1) * timestampPercent);
+    if (newCurrentTimestamp != currentTimestamp) {
+        currentTimestamp = newCurrentTimestamp;
+        updateMainBoard();
+    }
+}
+
+/*
+
+<Input Event Handlers>
+
+*/
+
 void cursorEnterCallback(GLFWwindow *window, int entered) {
     if (entered) {
     } else {
@@ -384,83 +484,13 @@ void cursorPositionCallback(GLFWwindow *window, double posx, double posy) {
             sr->y = y;
             updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
         }
+    } else if (posy >= 7 * WINDOW_HEIGHT / 8 && draggingTimeMarker) {
+        updateTimeMarkerPosition(posx);
     }
 }
 
-void updateTimelineThumbnails() {
-    int length = utarray_len(timeline);
-    GLfloat calculatedSpace = 4.0 / length;
-    
-    int maxThumbnails = 4.0 / (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP);
-    if (length <= maxThumbnails) {
-        // printf("Rendering all snapshots on timeline\n");
-        utarray_clear(timelineThumbnails);
-        // put each snapshot on a thumbnail
-        for (int i = 0; i < length; i++) {
-            struct BoardRender boardRender;
-            boardRender.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
-            boardRender.y = -2;
-            boardRender.size = TIMELINE_THUMBNAIL_WIDTH;
-            populatePieceVertices(utarray_eltptr(timeline, i), &boardRender);
-            utarray_push_back(timelineThumbnails, &boardRender);
-            // printf("Added %d-th thumbnail to timeline thumbnails\n", i);
-        }
-    } else {
-        // printf("Only rendering some snapshots on timeline\n");
-        utarray_clear(timelineThumbnails);
-        for (int i = 0; i < maxThumbnails; i++) {
-            int index = round(((float)i / maxThumbnails) * length);
-            struct BoardRender boardRender;
-            boardRender.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
-            boardRender.y = -2;
-            boardRender.size = TIMELINE_THUMBNAIL_WIDTH;
-            populatePieceVertices(utarray_eltptr(timeline, index), &boardRender);
-            utarray_push_back(timelineThumbnails, &boardRender);
-            // printf("Added %d-th thumbnail to timeline thumbnails\n", i);
-        }
-    }
-}
-
-void addToTimeline(struct Board *board) {
-    utarray_push_back(timeline, board);
-    updateTimelineThumbnails();
-    currentTimestamp = utarray_len(timeline) - 1;
-}
-
-void renderTimeline() {
-    int length = utarray_len(timelineThumbnails);
-    for (int i = 0; i < length; i++) {
-        struct BoardRender *boardRender = utarray_eltptr(timelineThumbnails, i);
-        updateBoardBuffer(&glSettings, boardRender);
-        updatePiecesBuffer(&glSettings, boardRender);
-        renderBoard(&glSettings);
-    }
-}
-
-void renderTimeMarker() {
-    glUseProgram(glSettings.timeMarkerProgram);
-    int timelineLength = utarray_len(timeline);
-    int maxThumbnails = 4.0 / (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP);
-    GLfloat totalWidth = (
-        timelineLength >= maxThumbnails ? 2.0 : timelineLength * (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) / 2
-    );
-    GLfloat x = totalWidth * (((float)currentTimestamp + 1.0) / (float)timelineLength) - 1.0;
-    // printf("totalWidth = %f\n", totalWidth);
-    timeMarkerVertices[0] = x;
-    timeMarkerVertices[1] = -0.76;
-    timeMarkerVertices[2] = x;
-    timeMarkerVertices[3] = -1.0;
-    glBindBuffer(GL_ARRAY_BUFFER, glSettings.timeMarkerBufferId);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(timeMarkerVertices), timeMarkerVertices, GL_STATIC_DRAW);
-    glBindVertexArray(glSettings.timeMarkerVertexArrayId);
-    glDrawArrays(GL_LINES, 0, 2);
-}
-
-void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifiers) {
+void handleMainBoardMouseClick(int button, int action, double posx, double posy) {
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        double posx, posy;
-        glfwGetCursorPos(window, &posx, &posy);
-        // printf("x = %f, y = %f\n", posx, posy);
         int column = 4 + 8.0 * (posx - WINDOW_WIDTH / 2) / (WINDOW_WIDTH / 2);
         int row = 4 + 8.0 * (posy - WINDOW_HEIGHT / 2) / (WINDOW_HEIGHT / 2) ;
         int boardPos = row * 8 + column;
@@ -471,38 +501,57 @@ void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifie
             
             // Find new position for piece
             struct Piece *piece = mainBoard->board.squares[draggingSquare];
-            if (boardPos != draggingSquare) {
-                struct Piece *replacedPiece = mainBoard->board.squares[boardPos];
-                if (replacedPiece != NULL && replacedPiece != piece) {
-                    // clean up
-                    struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex];
-                    sr->x = -1.0;
-                    sr->y = -1.0;
+            if (piece != NULL) {
+                if (boardPos != draggingSquare) {
+                    struct Piece *replacedPiece = mainBoard->board.squares[boardPos];
+                    if (replacedPiece != NULL && replacedPiece != piece) {
+                        // clean up
+                        struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex];
+                        sr->x = -1.0;
+                        sr->y = -1.0;
+                    }
+                    mainBoard->board.squares[draggingSquare] = NULL;
+                    mainBoard->board.squares[boardPos] = piece;
                 }
-                mainBoard->board.squares[draggingSquare] = NULL;
-                mainBoard->board.squares[boardPos] = piece;
-            }
-            
-            struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
-            GLfloat squareLength = mainBoard->boardRender.size / 8;
-            GLfloat x = mainBoard->boardRender.x + squareLength * (boardPos % 8);
-            GLfloat y = mainBoard->boardRender.y + squareLength * (7 - floor(boardPos / 8));
-            
-            sr->x = x;
-            sr->y = y;
-            
-            updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
-            if (boardPos != draggingSquare) {
-                addToTimeline(&mainBoard->board);
+                
+                struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
+                GLfloat squareLength = mainBoard->boardRender.size / 8;
+                GLfloat x = mainBoard->boardRender.x + squareLength * (boardPos % 8);
+                GLfloat y = mainBoard->boardRender.y + squareLength * (7 - floor(boardPos / 8));
+                
+                sr->x = x;
+                sr->y = y;
+                
+                updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
+                if (boardPos != draggingSquare) {
+                    addToTimeline(&mainBoard->board);
+                }
             }
             draggingSquare = -1;
         }
     }
 }
 
-void updateMainBoard() {
-    memcpy(&mainBoard->board, utarray_eltptr(timeline, currentTimestamp), sizeof(struct Board));
-    populatePieceVertices(&mainBoard->board, &mainBoard->boardRender);
+void handleTimelineMouseClick(int button, int action, double posx, double posy) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_RELEASE) {
+            updateTimeMarkerPosition(posx);
+            draggingTimeMarker = 0;
+        } else if (action == GLFW_PRESS) {
+            draggingTimeMarker = 1;
+        }
+    }
+}
+
+void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifiers) {
+    double posx, posy;
+    glfwGetCursorPos(window, &posx, &posy);
+    // printf("x = %f, y = %f\n", posx, posy);
+    if (posx >= WINDOW_WIDTH / 4 && posx <= 3 * WINDOW_WIDTH / 4 && posy >= WINDOW_HEIGHT / 4 && posy <= 3 * WINDOW_HEIGHT / 4) {
+        handleMainBoardMouseClick(button, action, posx, posy);
+    } else if (posy >= 7 * WINDOW_HEIGHT / 8) {
+        handleTimelineMouseClick(button, action, posx, posy);
+    }
 }
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
@@ -521,6 +570,12 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
         updateMainBoard();
     }
 }
+
+/*
+
+</Input Event Handlers>
+
+*/
 
 int appMainLoop() {
     GLFWwindow* window = NULL;
@@ -561,7 +616,7 @@ int appMainLoop() {
     initGLSettings(&glSettings);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glLineWidth(1);
+    glClearColor(0.05, 0.15, 0.05, 1.0);
     initBuffers(&glSettings);
     
     mainBoard = malloc(sizeof(struct BoardData));

@@ -1,11 +1,15 @@
 # Todo
 
+* make time marker thicker
+* animate time marker moving
 * animate moves when forwarding rewinding time line
-* use mouse click to navigate timeline
 * mouse hover preview
 * forking of timeline
+* castling
+* en passant
 
 ## Done
 
+* use mouse click to navigate timeline (done)
 * use geometry shader to generate 2 triangles that give a square based on coordinate, 
 side length (done)

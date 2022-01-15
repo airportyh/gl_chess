@@ -1,0 +1,2 @@
+rm *.bin .DS_Store *.png~ *.kra~
+rm -fr *.bin.dSYM
