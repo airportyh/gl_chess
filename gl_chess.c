@@ -16,6 +16,7 @@
 #define SQUARE_LENGTH 0.25
 #define TIMELINE_THUMBNAIL_WIDTH 0.48
 #define TIMELINE_GAP 0.02
+#define ANIMATION_DURATION 50
 
 enum PieceType {
     Pawn, Knight, Biship, Rook, King, Queen
@@ -80,6 +81,14 @@ struct GLSettings {
     GLuint timeMarkerBufferId;
 };
 
+struct TimeMarkerAnimation {
+    int targetTimestamp;
+    GLfloat srcX;
+    GLfloat dstX;
+    int endTick; // animation is active if endTick is > 0
+    int currentTick;
+};
+
 struct BoardData *mainBoard = NULL;
 
 UT_icd board_icd = { sizeof(struct Board), NULL, NULL, NULL };
@@ -92,6 +101,7 @@ int currentTimestamp = 0;
 GLfloat timeMarkerVertices[8];
 int draggingTimeMarker = 0;
 int draggingSquare = -1;
+struct TimeMarkerAnimation timeMarkerAnimation;
 
 void displayGLVersions() {
     printf("OpenGL version: %s\n", glGetString(GL_VERSION));
@@ -396,9 +406,7 @@ void updateTimelineThumbnails() {
         boardRender.size = TIMELINE_THUMBNAIL_WIDTH;
         populatePieceVertices(utarray_eltptr(timeline, index), &boardRender);
         utarray_push_back(timelineThumbnails, &boardRender);
-        // printf("Added %d-th thumbnail to timeline thumbnails\n", i);
     }
-    // }
 }
 
 void addToTimeline(struct Board *board) {
@@ -423,14 +431,22 @@ void renderTimeline() {
 
 void renderTimeMarker() {
     int timelineLength = utarray_len(timeline);
+    GLfloat timeMarkerGap = 0.0001;
+    GLfloat x;
     if (timelineLength <= 1) {
         return;
     }
     
+    if (timeMarkerAnimation.endTick > 0) {
+        // render tween state
+        GLfloat animationPercent = (float)timeMarkerAnimation.currentTick / (float)timeMarkerAnimation.endTick;
+        x = (1.0 - animationPercent) * timeMarkerAnimation.srcX + animationPercent * timeMarkerAnimation.dstX;
+        // printf("animationPercent = %f, x = %f\n", animationPercent, x);
+        
+    } else {
+        x = (2 - 2 * timeMarkerGap) * (((float)currentTimestamp) / (float)(timelineLength - 1)) - 1 + timeMarkerGap;
+    }
     glUseProgram(glSettings.timeMarkerProgram);
-    int maxThumbnails = 4.0 / (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP);
-    GLfloat timeMarkerGap = 0.0001;
-    GLfloat x = (2 - 2 * timeMarkerGap) * (((float)currentTimestamp) / (float)(timelineLength - 1)) - 1 + timeMarkerGap;
     timeMarkerVertices[0] = x;
     timeMarkerVertices[1] = -0.76;
     timeMarkerVertices[2] = x;
@@ -446,13 +462,49 @@ void updateMainBoard() {
     populatePieceVertices(&mainBoard->board, &mainBoard->boardRender);
 }
 
+void animateTimeMarkerToTimestamp(int timestamp) {
+    if (timeMarkerAnimation.targetTimestamp == timestamp) {
+        return;
+    }
+    GLfloat srcX;
+    int timelineLength = utarray_len(timeline);
+    GLfloat timeMarkerGap = 0.0001;
+    GLfloat dstX = (2 - 2 * timeMarkerGap) * (((float)timestamp) / (float)(timelineLength - 1)) - 1 + timeMarkerGap;
+    if (timeMarkerAnimation.endTick != 0) {
+        GLfloat animationPercent = (float)timeMarkerAnimation.currentTick / (float)timeMarkerAnimation.endTick;
+        srcX = (1.0 - animationPercent) * timeMarkerAnimation.srcX + animationPercent * timeMarkerAnimation.dstX;
+    } else {
+        srcX = (2 - 2 * timeMarkerGap) * (((float)currentTimestamp) / (float)(timelineLength - 1)) - 1 + timeMarkerGap;
+    }
+    
+    timeMarkerAnimation.targetTimestamp = timestamp;
+    timeMarkerAnimation.endTick = ANIMATION_DURATION;
+    timeMarkerAnimation.currentTick = 0;
+    timeMarkerAnimation.srcX = srcX;
+    timeMarkerAnimation.dstX = dstX;
+}
+
 void updateTimeMarkerPosition(double posx) {
     int timelineLength = utarray_len(timeline);
     GLfloat timestampPercent = posx / WINDOW_WIDTH;
     int newCurrentTimestamp = round((timelineLength - 1) * timestampPercent);
     if (newCurrentTimestamp != currentTimestamp) {
-        currentTimestamp = newCurrentTimestamp;
-        updateMainBoard();
+        animateTimeMarkerToTimestamp(newCurrentTimestamp);
+    }
+}
+
+void updateTimeMarkerState() {
+    if (timeMarkerAnimation.endTick > 0) {
+        // Update animation
+        if (timeMarkerAnimation.currentTick >= timeMarkerAnimation.endTick) {
+            // Animation complete
+            // printf("Animation complete\n");
+            timeMarkerAnimation.endTick = 0;
+            currentTimestamp = timeMarkerAnimation.targetTimestamp;
+            updateMainBoard();
+        } else {
+            timeMarkerAnimation.currentTick++;
+        }
     }
 }
 
@@ -557,17 +609,17 @@ void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifie
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
-        currentTimestamp--;
-        if (currentTimestamp < 0) {
-            currentTimestamp = utarray_len(timeline) - 1;
+        int targetTimestamp = currentTimestamp - 1;
+        if (targetTimestamp < 0) {
+            targetTimestamp = utarray_len(timeline) - 1;
         }
-        updateMainBoard();
+        animateTimeMarkerToTimestamp(targetTimestamp);
     } else if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
-        currentTimestamp++;
-        if (currentTimestamp >= utarray_len(timeline)) {
-            currentTimestamp = 0;
+        int targetTimestamp = currentTimestamp + 1;
+        if (targetTimestamp >= utarray_len(timeline)) {
+            targetTimestamp = 0;
         }
-        updateMainBoard();
+        animateTimeMarkerToTimestamp(targetTimestamp);
     }
 }
 
@@ -618,6 +670,7 @@ int appMainLoop() {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glClearColor(0.05, 0.15, 0.05, 1.0);
     initBuffers(&glSettings);
+    timeMarkerAnimation.endTick = 0;
     
     mainBoard = malloc(sizeof(struct BoardData));
     
@@ -641,6 +694,7 @@ int appMainLoop() {
         updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
         renderBoard(&glSettings);
         renderTimeline();
+        updateTimeMarkerState();
         renderTimeMarker();
         glfwSwapBuffers(window);
     }
