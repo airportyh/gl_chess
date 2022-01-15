@@ -601,6 +601,7 @@ void handleTimelineMouseClick(int button, int action, double posx, double posy) 
             updateTimeMarkerPosition(posx);
             draggingTimeMarker = 0;
         } else if (action == GLFW_PRESS) {
+            updateTimeMarkerPosition(posx);
             draggingTimeMarker = 1;
         }
     }
