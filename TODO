@@ -5,8 +5,7 @@
 * mouse hover preview
 * castling
 * en passant
-* refactor: pieces are not malloc'ed but live in the board pieces array so 
-    than promotion can be implemented easily
+* promotion
 * refactor: pass board top-left as a uniform for piece rendering so that 
     piece vertices do not have to be updated when moving a board
 * get better looking pieces
@@ -14,6 +13,8 @@
 
 ## Done
 
+* refactor: pieces are not malloc'ed but live in the board pieces array so 
+    than promotion can be implemented easily (done)
 * make time marker thicker (done)
 * animate time marker moving (done)
 * use mouse click to navigate timeline (done)

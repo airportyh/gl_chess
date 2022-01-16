@@ -30,7 +30,7 @@ enum Color {
 enum SpriteType {
     WPawn=0, WKnight, WBiship, WRook, WKing, WQueen,
     BPawn=8, BKnight, BBiship, BRook, BKing, BQueen,
-    WSquare=16, BSquare
+    Blank=16
 };
 
 struct Piece {
@@ -39,7 +39,7 @@ struct Piece {
 };
 
 struct Board {
-    struct Piece *squares[64];
+    struct Piece squares[64];
 };
 
 struct SpriteRender {
@@ -88,6 +88,11 @@ struct TimeMarkerAnimation {
     GLfloat dstX;
     int endTick; // animation is active if endTick is > 0
     int currentTick;
+};
+
+struct TimelineNode {
+    UT_array *timestamps; // array of struct Board's
+    UT_array *children;   // array of struct TimelineNode's
 };
 
 struct BoardData *mainBoard = NULL;
@@ -156,10 +161,10 @@ GLenum textureFormat(int channels) {
     return result;
 }
 
-struct Piece *createPiece(enum SpriteType type, int vertexArrayIndex) {
-    struct Piece *piece = malloc(sizeof(struct Piece));
-    piece->type = type;
-    piece->vertexArrayIndex = vertexArrayIndex;
+struct Piece createPiece(enum SpriteType type, int vertexArrayIndex) {
+    struct Piece piece;
+    piece.type = type;
+    piece.vertexArrayIndex = vertexArrayIndex;
     return piece;
 }
 
@@ -179,8 +184,10 @@ The Board
 */
 
 void initBoard(struct Board *board) {
+    
     for (int i = 0; i < 64; i++) {
-        board->squares[i] = NULL;
+        board->squares[i].type = Blank;
+        board->squares[i].vertexArrayIndex = -1;
     }
     
     board->squares[0] = createPiece(BRook, 0);
@@ -217,6 +224,19 @@ void initBoard(struct Board *board) {
     board->squares[62] = createPiece(WKnight, 30);
     board->squares[63] = createPiece(WRook, 31);
     
+}
+
+
+void printBoard(struct Board *board) {
+    for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+            int i = row * 8 + col;
+            struct Piece *piece = &(board->squares[i]);
+            printf("%d, %d\t", piece->type, piece->vertexArrayIndex);
+        }
+        printf("\n");
+    }
+    printf("\n");
 }
 
 void initBuffers(
@@ -336,8 +356,8 @@ void populatePieceVertices(struct Board *board, struct BoardRender *boardRender)
     }
     
     for (int i = 0; i < 64; i++) {
-        struct Piece *piece = board->squares[i];
-        if (piece != NULL) {
+        struct Piece *piece = &(board->squares[i]);
+        if (piece->type != Blank) {
             GLfloat x = left + squareLength * (i % 8);
             GLfloat y = top + squareLength * (7 - floor(i / 8));
             boardRender->pieceVertices[piece->vertexArrayIndex].x = x;
@@ -376,23 +396,6 @@ void renderBoard(struct GLSettings *glSettings) {
 
 void updateTimelineThumbnails() {
     int length = utarray_len(timeline);
-    
-    
-    // if (length <= maxThumbnails) {
-    //     // printf("Rendering all snapshots on timeline\n");
-    //     utarray_clear(timelineThumbnails);
-    //     // put each snapshot on a thumbnail
-    //     for (int i = 0; i < length; i++) {
-    //         struct BoardRender boardRender;
-    //         boardRender.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
-    //         boardRender.y = -2;
-    //         boardRender.size = TIMELINE_THUMBNAIL_WIDTH;
-    //         populatePieceVertices(utarray_eltptr(timeline, i), &boardRender);
-    //         utarray_push_back(timelineThumbnails, &boardRender);
-    //         // printf("Added %d-th thumbnail to timeline thumbnails\n", i);
-    //     }
-    // } else {
-        // printf("Only rendering some snapshots on timeline\n");
     utarray_clear(timelineThumbnails);
     if (length <= 1) {
         return;
@@ -535,8 +538,8 @@ void cursorEnterCallback(GLFWwindow *window, int entered) {
 void cursorPositionCallback(GLFWwindow *window, double posx, double posy) {
     // printf("mouse x = %f, y = %f\n", x, y);
     if (draggingSquare != -1) {
-        struct Piece *piece = mainBoard->board.squares[draggingSquare];
-        if (piece != NULL) {
+        struct Piece *piece = &mainBoard->board.squares[draggingSquare];
+        if (piece->type != Blank) {
             GLfloat squareLength = 2.0 / 8.0;
             // move the piece
             double x = (posx - WINDOW_WIDTH / 2) * 4 / WINDOW_WIDTH - 0.5 * squareLength;
@@ -563,20 +566,22 @@ void handleMainBoardMouseClick(int button, int action, double posx, double posy)
         } else { // action == GLFW_RELEASE
             
             // Find new position for piece
-            struct Piece *piece = mainBoard->board.squares[draggingSquare];
-            if (piece != NULL) {
+            struct Piece *piece = &(mainBoard->board.squares[draggingSquare]);
+            if (piece->type != Blank) {
                 if (boardPos != draggingSquare) {
-                    struct Piece *replacedPiece = mainBoard->board.squares[boardPos];
-                    if (replacedPiece != NULL && replacedPiece != piece) {
+                    struct Piece *replacedPiece = &(mainBoard->board.squares[boardPos]);
+                    if (replacedPiece->type != Blank) {
                         // clean up
-                        struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex];
+                        struct SpriteRender *sr = &(mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex]);
                         sr->x = -1.0;
                         sr->y = -1.0;
                     }
-                    mainBoard->board.squares[draggingSquare] = NULL;
-                    mainBoard->board.squares[boardPos] = piece;
+                    memcpy(&mainBoard->board.squares[boardPos], piece, sizeof(struct Piece));
+                    mainBoard->board.squares[draggingSquare].type = Blank;
+                    mainBoard->board.squares[draggingSquare].vertexArrayIndex = -1;
                 }
                 
+                piece = &mainBoard->board.squares[boardPos];
                 struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
                 GLfloat squareLength = mainBoard->boardRender.size / 8;
                 GLfloat x = mainBoard->boardRender.x + squareLength * (boardPos % 8);
@@ -704,13 +709,15 @@ int appMainLoop() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         updateBoardBuffer(&glSettings, &mainBoard->boardRender);
         updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
+        // printf("boardRender.x = %f, boardRender.y = %f\n", mainBoard->boardRender.x, mainBoard->boardRender.y);
+        
         renderBoard(&glSettings);
         renderTimeline();
         updateTimeMarkerState();
         renderTimeMarker();
         glfwSwapBuffers(window);
     }
-
+    
     glBindVertexArray(0);
     glUseProgram(0);
     
