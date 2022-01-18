@@ -1,13 +1,15 @@
 # Todo
 
 * forking of timeline
+* use gl_VertexID to eliminate the need for the piecesVertices buffer
+    and instead use the board directly as the vertex buffer
+* refactor: pass board top-left as a uniform for piece rendering so that 
+    piece vertices do not have to be updated when moving a board
 * animate moves when forwarding rewinding time line
 * mouse hover preview
 * castling
 * en passant
 * promotion
-* refactor: pass board top-left as a uniform for piece rendering so that 
-    piece vertices do not have to be updated when moving a board
 * get better looking pieces
 * parse and render pgn
 

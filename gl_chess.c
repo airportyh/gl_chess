@@ -91,7 +91,7 @@ struct TimeMarkerAnimation {
 };
 
 struct TimelineNode {
-    UT_array *timestamps; // array of struct Board's
+    UT_array *snapshots; // array of struct Board's
     UT_array *children;   // array of struct TimelineNode's
 };
 
@@ -101,9 +101,10 @@ UT_icd board_icd = { sizeof(struct Board), NULL, NULL, NULL };
 UT_icd board_render_icd = { sizeof(struct BoardRender), NULL, NULL, NULL };
 
 struct GLSettings glSettings;
-UT_array *timeline = NULL;
+struct TimelineNode *timeline = NULL;
+struct TimelineNode *currentTimelineBranch = NULL;
+int currentTimestamp = 0; // TODO: rename to currentSnapshot?
 UT_array *timelineThumbnails = NULL;
-int currentTimestamp = 0;
 GLfloat timeMarkerVertices[8];
 int draggingTimeMarker = 0;
 int draggingSquare = -1;
@@ -395,7 +396,7 @@ void renderBoard(struct GLSettings *glSettings) {
 }
 
 void updateTimelineThumbnails() {
-    int length = utarray_len(timeline);
+    int length = utarray_len(timeline->snapshots);
     utarray_clear(timelineThumbnails);
     if (length <= 1) {
         return;
@@ -408,15 +409,24 @@ void updateTimelineThumbnails() {
         boardRender.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
         boardRender.y = -2;
         boardRender.size = TIMELINE_THUMBNAIL_WIDTH;
-        populatePieceVertices(utarray_eltptr(timeline, index), &boardRender);
+        populatePieceVertices(utarray_eltptr(timeline->snapshots, index), &boardRender);
         utarray_push_back(timelineThumbnails, &boardRender);
     }
 }
 
 void addToTimeline(struct Board *board) {
-    utarray_push_back(timeline, board);
-    updateTimelineThumbnails();
-    currentTimestamp = utarray_len(timeline) - 1;
+    int timelineLength = utarray_len(timeline->snapshots);
+    if (timelineLength == 0 || (currentTimestamp == timelineLength - 1)) {
+        printf("Pushing to end of timeline\n");
+        utarray_push_back(timeline->snapshots, board);
+        updateTimelineThumbnails();
+        currentTimestamp = utarray_len(timeline->snapshots) - 1;
+    } else {
+        printf("Forking timeline. currentTimestamp = %d, timelineLength = %d\n", currentTimestamp, timelineLength);
+        // Create an alternate timeline
+        struct Board *currentBoard = utarray_eltptr(timeline->snapshots, currentTimestamp);
+        
+    }
 }
 
 void renderTimeline() {
@@ -434,7 +444,7 @@ void renderTimeline() {
 
 
 void renderTimeMarker() {
-    int timelineLength = utarray_len(timeline);
+    int timelineLength = utarray_len(timeline->snapshots);
     GLfloat timeMarkerGap = 0.0001;
     GLfloat x;
     if (timelineLength <= 1) {
@@ -469,7 +479,7 @@ void renderTimeMarker() {
 }
 
 void updateMainBoard() {
-    memcpy(&mainBoard->board, utarray_eltptr(timeline, currentTimestamp), sizeof(struct Board));
+    memcpy(&mainBoard->board, utarray_eltptr(timeline->snapshots, currentTimestamp), sizeof(struct Board));
     populatePieceVertices(&mainBoard->board, &mainBoard->boardRender);
 }
 
@@ -478,7 +488,7 @@ void animateTimeMarkerToTimestamp(int timestamp) {
         return;
     }
     GLfloat srcX;
-    int timelineLength = utarray_len(timeline);
+    int timelineLength = utarray_len(timeline->snapshots);
     GLfloat timeMarkerGap = 0.0001;
     GLfloat dstX = (2 - 2 * timeMarkerGap) * (((float)timestamp) / (float)(timelineLength - 1)) - 1 + timeMarkerGap;
     if (timeMarkerAnimation.endTick != 0) {
@@ -499,7 +509,7 @@ void animateTimeMarkerToTimestamp(int timestamp) {
 }
 
 void updateTimeMarkerPosition(double posx) {
-    int timelineLength = utarray_len(timeline);
+    int timelineLength = utarray_len(timeline->snapshots);
     GLfloat timestampPercent = posx / WINDOW_WIDTH;
     int newCurrentTimestamp = round((timelineLength - 1) * timestampPercent);
     if (newCurrentTimestamp != currentTimestamp) {
@@ -519,6 +529,41 @@ void updateTimeMarkerState() {
         } else {
             timeMarkerAnimation.currentTick++;
         }
+    }
+}
+
+void initTimeline() {
+    timeline = malloc(sizeof(struct TimelineNode));
+    utarray_new(timeline->snapshots, &board_icd);
+}
+
+void commitMove(int destPos, int srcPos) {
+    struct Piece *piece = &(mainBoard->board.squares[srcPos]);
+    if (destPos != srcPos) {
+        struct Piece *replacedPiece = &(mainBoard->board.squares[destPos]);
+        if (replacedPiece->type != Blank) {
+            // clean up
+            struct SpriteRender *sr = &(mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex]);
+            sr->x = -1.0;
+            sr->y = -1.0;
+        }
+        memcpy(&mainBoard->board.squares[destPos], piece, sizeof(struct Piece));
+        mainBoard->board.squares[srcPos].type = Blank;
+        mainBoard->board.squares[srcPos].vertexArrayIndex = -1;
+    }
+    
+    piece = &mainBoard->board.squares[destPos];
+    struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
+    GLfloat squareLength = mainBoard->boardRender.size / 8;
+    GLfloat x = mainBoard->boardRender.x + squareLength * (destPos % 8);
+    GLfloat y = mainBoard->boardRender.y + squareLength * (7 - floor(destPos / 8));
+    
+    sr->x = x;
+    sr->y = y;
+    
+    updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
+    if (destPos != srcPos) {
+        addToTimeline(&mainBoard->board);
     }
 }
 
@@ -564,37 +609,7 @@ void handleMainBoardMouseClick(int button, int action, double posx, double posy)
             // printf("Start drag from row = %d, column = %d, boardPos = %d\n", row, column, boardPos);
             draggingSquare = boardPos;
         } else { // action == GLFW_RELEASE
-            
-            // Find new position for piece
-            struct Piece *piece = &(mainBoard->board.squares[draggingSquare]);
-            if (piece->type != Blank) {
-                if (boardPos != draggingSquare) {
-                    struct Piece *replacedPiece = &(mainBoard->board.squares[boardPos]);
-                    if (replacedPiece->type != Blank) {
-                        // clean up
-                        struct SpriteRender *sr = &(mainBoard->boardRender.pieceVertices[replacedPiece->vertexArrayIndex]);
-                        sr->x = -1.0;
-                        sr->y = -1.0;
-                    }
-                    memcpy(&mainBoard->board.squares[boardPos], piece, sizeof(struct Piece));
-                    mainBoard->board.squares[draggingSquare].type = Blank;
-                    mainBoard->board.squares[draggingSquare].vertexArrayIndex = -1;
-                }
-                
-                piece = &mainBoard->board.squares[boardPos];
-                struct SpriteRender *sr = &mainBoard->boardRender.pieceVertices[piece->vertexArrayIndex];
-                GLfloat squareLength = mainBoard->boardRender.size / 8;
-                GLfloat x = mainBoard->boardRender.x + squareLength * (boardPos % 8);
-                GLfloat y = mainBoard->boardRender.y + squareLength * (7 - floor(boardPos / 8));
-                
-                sr->x = x;
-                sr->y = y;
-                
-                updatePiecesBuffer(&glSettings, &mainBoard->boardRender);
-                if (boardPos != draggingSquare) {
-                    addToTimeline(&mainBoard->board);
-                }
-            }
+            commitMove(boardPos, draggingSquare);
             draggingSquare = -1;
         }
     }
@@ -628,12 +643,12 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
         int targetTimestamp = currentTimestamp - 1;
         if (targetTimestamp < 0) {
-            targetTimestamp = utarray_len(timeline) - 1;
+            targetTimestamp = utarray_len(timeline->snapshots) - 1;
         }
         animateTimeMarkerToTimestamp(targetTimestamp);
     } else if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
         int targetTimestamp = currentTimestamp + 1;
-        if (targetTimestamp >= utarray_len(timeline)) {
+        if (targetTimestamp >= utarray_len(timeline->snapshots)) {
             targetTimestamp = 0;
         }
         animateTimeMarkerToTimestamp(targetTimestamp);
@@ -699,7 +714,7 @@ int appMainLoop() {
     
     populatePieceVertices(&mainBoard->board, &mainBoard->boardRender);
     
-    utarray_new(timeline, &board_icd);
+    initTimeline();
     utarray_new(timelineThumbnails, &board_render_icd);
     
     addToTimeline(&mainBoard->board);
