@@ -13,6 +13,11 @@ void main() {
     float pieceLength = 1.0 / 7.0;
     vec4 position = gl_in[0].gl_Position;
     float size = gs_in[0].size;
+    
+    if (size == 0) {
+        return;
+    }
+    
     vec2 fragCoordTopLeft = gs_in[0].fragCoordTopLeft;
     //fragCoordTopLeft = vec2(2.0 / 7.0, 0.5);
     gl_Position = position + vec4(0, size, 0, 1);

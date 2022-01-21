@@ -1,17 +1,26 @@
 #version 330
 
-in vec2 vertex;
+uniform float boardSize;
+uniform vec2 boardTopLeft;
+uniform int overrideID;
+uniform vec2 overridePosition;
 in int spriteType;
-in float size;
+
 out VS_OUT {
     float size;
     vec2 fragCoordTopLeft;
 } vs_out;
 
 void main() {
+    int boardPos = gl_VertexID;
+    vec2 vertex;
+    if (boardPos == overrideID) {
+        vertex = boardTopLeft + overridePosition;        
+    }  else {
+        vertex = boardTopLeft + (vec2(mod(boardPos, 8), 7 - boardPos / 8) * boardSize / 8);
+    }
     gl_Position = vec4(vertex, 0.0, 1.0);
-    gl_PointSize = 10.0;
-    vs_out.size = size;
+    vs_out.size = boardSize / 8;
     float texTop;
     float texLeft;
     float pieceWidth = 1.0 / 7.0;
@@ -65,18 +74,11 @@ void main() {
         texTop = 0.0;
         texLeft = 6.0 * pieceWidth;
     } else if (spriteType == 16) {
-        // WSquare
-        texTop = 0.5;
-        texLeft = 0.0;
-    } else if (spriteType == 17) {
-        // BSquare
-        texTop = 0.0;
-        texLeft = 0.0;
+        // Blank
+        vs_out.size = 0;
     } else {
-        texTop = 0.5;
-        texLeft = 3.0 * pieceWidth;
+        vs_out.size = 0;
     }
-    
     
     vs_out.fragCoordTopLeft = vec2(texLeft, texTop);
 }
