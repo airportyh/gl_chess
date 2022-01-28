@@ -15,7 +15,8 @@
 #define WINDOW_HEIGHT 720
 #define SQUARE_LENGTH 0.25
 #define TIMELINE_THUMBNAIL_WIDTH 0.48
-#define TIMELINE_GAP 0.02
+#define TIMELINE_THUMBNAIL_GAP 0.02
+#define TIMELINE_GAP 0.1
 #define ANIMATION_DURATION 40
 #define TIME_MARKER_WIDTH 0.007
 
@@ -33,6 +34,21 @@ struct BoardView {
     GLfloat x;
     GLfloat y;
     GLfloat size;
+};
+
+struct TimelineNode {
+    struct TimelineNode *parent;
+    UT_array *snapshots; // array of struct Board's
+    UT_array *children;   // array of struct TimelineNode's
+};
+
+struct TimelineViewNode {
+    GLfloat x;
+    GLfloat y;
+    GLfloat width;
+    GLfloat height;
+    struct TimelineNode *timeline;
+    UT_array *children; // array of struct TimelineViewNode's
 };
 
 struct GLSettings {
@@ -63,20 +79,16 @@ struct TimeMarkerAnimation {
     int currentTick;
 };
 
-struct TimelineNode {
-    UT_array *snapshots; // array of struct Board's
-    UT_array *children;   // array of struct TimelineNode's
-};
-
 struct Board mainBoard;
 struct BoardView mainBoardView;
 
 UT_icd board_icd = { sizeof(struct Board), NULL, NULL, NULL };
-UT_icd board_render_icd = { sizeof(struct BoardView), NULL, NULL, NULL };
+UT_icd timeline_view_icd = { sizeof(struct TimelineViewNode), NULL, NULL };
 
 struct GLSettings glSettings;
-struct TimelineNode *timeline = NULL;
-struct TimelineNode *currentTimelineBranch = NULL;
+struct TimelineNode *rootTimeline = NULL;
+struct TimelineNode *currTimeline = NULL;
+struct TimelineViewNode timelineView;
 int currentTimestamp = 0; // TODO: rename to currentSnapshot?
 GLfloat timeMarkerVertices[8];
 int draggingTimeMarker = 0;
@@ -188,6 +200,22 @@ void initBoard(struct Board *board) {
     
 }
 
+GLfloat max(GLfloat a, GLfloat b) {
+    if (a > b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
+GLfloat min(GLfloat a, GLfloat b) {
+    if (a < b) {
+        return a;
+    } else {
+        return b;
+    }
+}
+
 void printBoard(struct Board *board) {
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
@@ -197,6 +225,14 @@ void printBoard(struct Board *board) {
         printf("\n");
     }
     printf("\n");
+}
+
+struct TimelineNode *newTimeline(struct TimelineNode *parent) {
+    struct TimelineNode *tl = malloc(sizeof(struct TimelineNode));
+    tl->parent = parent;
+    utarray_new(tl->snapshots, &board_icd);
+    utarray_new(tl->children, &timeline_view_icd);
+    return tl;
 }
 
 void initBuffers(
@@ -338,42 +374,284 @@ void renderBoard(
     glDrawArrays(GL_POINTS, 0, 64);
 }
 
-void addToTimeline(struct Board *board) {
-    int timelineLength = utarray_len(timeline->snapshots);
-    if (timelineLength == 0 || (currentTimestamp == timelineLength - 1)) {
-        // printf("Pushing to end of timeline\n");
-        utarray_push_back(timeline->snapshots, board);
-        currentTimestamp = utarray_len(timeline->snapshots) - 1;
-    } else {
-        printf("Forking timeline. currentTimestamp = %d, timelineLength = %d\n", currentTimestamp, timelineLength);
-        // Create an alternate timeline
-        struct Board *currentBoard = utarray_eltptr(timeline->snapshots, currentTimestamp);    
+void printIndent(int indent) {
+    for (int i = 0; i < indent; i++) {
+        printf(" ");
     }
 }
 
-void renderTimeline() {
+void printTimeline(struct TimelineNode *timeline, int indent) {
+    if (timeline == NULL) {
+        return;
+    }
+    // printIndent(indent);
+    // printf("printTimeline\n");
+    // printIndent(indent);
+    // printf("timeline=%d, snapshots=%d\n", (int)timeline, (int)timeline->snapshots);
+    int timelineLen = utarray_len(timeline->snapshots);
+    // printIndent(indent);
+    // printf("got timelineLen\n");
+    printIndent(indent);
+    for (int i = 0; i < timelineLen; i++) {
+        printf("o");
+    }
+    int numChildren = utarray_len(timeline->children);
+    if (numChildren > 0) {
+        // printIndent(indent);
+        // printf("process children\n");
+        for (int i = 0; i < numChildren; i++) {
+            struct TimelineNode *child = utarray_eltptr(timeline->children, i);
+            if (i == 0) {
+                printf("  ");
+                printTimeline(child, 0);
+            } else {
+                printTimeline(child, indent + timelineLen + 2);
+            }
+        }    
+    } else {
+        // printIndent(indent);
+        // printf("end printTimeline\n");
+        printf("\n");
+    }
+}
+
+void printTimelineView(struct TimelineViewNode *timelineView, int level) {
+    printIndent(level);
+    printf("TLV(x=%f, y=%f, width=%f, height=%f, count=%d)\n", 
+        timelineView->x, timelineView->y,
+        timelineView->width, timelineView->height,
+        utarray_len(timelineView->timeline->snapshots)
+    );
+    if (timelineView->children == NULL) {
+        return;
+    }
+    int numChildren = utarray_len(timelineView->children);
+    for (int i = 0; i < numChildren; i++) {
+        printTimelineView(utarray_eltptr(timelineView->children, i), level + 1);
+    }
+}
+
+int getTotalTimelineLength(struct TimelineNode *timeline) {
+    if (timeline == NULL) {
+        return 0;
+    }
+    if (timeline->children == NULL) {
+        return 1;
+    }
+    int numChildren = utarray_len(timeline->children);
+    int maxChildLength = 0;
+    for (int i = 0; i < numChildren; i++) {
+        struct TimelineNode *child = utarray_eltptr(timeline->children, i);
+        int childLength = getTotalTimelineLength(child);
+        if (childLength > maxChildLength) {
+            maxChildLength = childLength;
+        }
+    }
     int length = utarray_len(timeline->snapshots);
-    if (length <= 1) {
+    return length + maxChildLength;
+}
+
+int getTotalTimelineHeight(struct TimelineNode *timeline) {
+    if (timeline == NULL) {
+        return 0;
+    }
+    if (timeline->children == NULL) {
+        return 1;
+    }
+    int numChildren = utarray_len(timeline->children);
+    if (numChildren == 0) {
+        return 1;
+    }
+    int sumChildrenHeight = 0;
+    for (int i = 0; i < numChildren; i++) {
+        struct TimelineNode *child = utarray_eltptr(timeline->children, i);
+        int childrenHeight = getTotalTimelineHeight(child);
+        sumChildrenHeight += childrenHeight;
+    }
+    return sumChildrenHeight;
+}
+
+void freeTimelineView(struct TimelineViewNode *node) {
+    if (node == NULL) {
         return;
     }
     
-    int numThumbnails = 4.0 / (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP);
+    if (node->children != NULL) {
+        int numChildren = utarray_len(node->children);
+        for (int i = 0; i < numChildren; i++) {
+            struct TimelineViewNode *child = utarray_eltptr(node->children, i);
+            freeTimelineView(child);
+        }
+        utarray_free(node->children);
+    }
+}
+
+void doLayoutTimeline(
+    struct TimelineNode *timeline,
+    GLfloat offsetx, GLfloat offsety,
+    int totalLength, int totalHeight,
+    GLfloat width, GLfloat heightPerLine,
+    struct TimelineViewNode *timelineView,
+    int level
+) {
+    // printIndent(level);
+    if (timeline == NULL) {
+        // printIndent(level);
+        // printf("Early return\n");
+        return;
+    }
+    timelineView->timeline = timeline;
+    timelineView->children = NULL;
+    timelineView->x = offsetx;
+    timelineView->height = heightPerLine;
+    // timelineView->y = offsety - (GLfloat)totalHeight * heightPerLine;
+    timelineView->y = offsety - heightPerLine;
+    int timelineLength = utarray_len(timeline->snapshots);
+    timelineView->width = ((float)timelineLength / (float)totalLength) * width;
+    
+    // printIndent(level);
+    // printf("has children array\n");
+    int numChildren = utarray_len(timeline->children);
+    if (numChildren == 0) {
+        // printIndent(level);
+        // printf("has no children\n");
+        return;
+    }
+    utarray_new(timelineView->children, &timeline_view_icd);
+    // printf("Allocated timelineView->children %u\n", (unsigned)timelineView->children);
+    for (int i = 0; i < numChildren; i++) {
+        struct TimelineNode *child = utarray_eltptr(timeline->children, i);
+        struct TimelineViewNode childView;
+        doLayoutTimeline(
+            child,
+            offsetx + timelineView->width, offsety - i * heightPerLine,
+            totalLength, totalHeight,
+            width, heightPerLine,
+            &childView,
+            level + 1
+        );
+        utarray_push_back(timelineView->children, &childView);
+        // printIndent(level);
+        // printf("pushed child view\n");
+    }
+    
+    
+}
+
+void layoutTimeline(struct TimelineNode *timeline) {
+    printf("layoutTimeline\n");
+
+    int length = getTotalTimelineLength(timeline);
+    int height = getTotalTimelineHeight(timeline);
+    
+    freeTimelineView(&timelineView);
+    
+    printf("layoutTimeline(totalLength=%d, totalHeight=%d, width=%d, heightPerLine=%f)\n", length, height, 4, (GLfloat)1 / height);
+    
+    doLayoutTimeline(
+        timeline, -2, -1, 
+        length, height,
+        4, (GLfloat)1 / height,
+        &timelineView,
+        0
+    );
+    
+    printTimelineView(&timelineView, 0);
+}
+
+void addToTimeline(struct Board *board) {
+    int timelineLength = utarray_len(currTimeline->snapshots);
+    if (timelineLength == 0 || (currentTimestamp == timelineLength - 1)) {
+        printf("Pushing to end of currTimeline\n");
+        utarray_push_back(currTimeline->snapshots, board);
+        currentTimestamp = utarray_len(currTimeline->snapshots) - 1;
+    } else {
+        printf("Forking timeline. currentTimestamp = %d, timelineLength = %d\n", currentTimestamp, timelineLength);
+        // Create an alternate timeline
+        int timelineLength = utarray_len(currTimeline->snapshots);
+        struct TimelineNode *childTimeline1 = newTimeline(currTimeline);
+        for (int i = currentTimestamp + 1; i < timelineLength; i++) {
+            utarray_push_back(childTimeline1->snapshots, utarray_eltptr(currTimeline->snapshots, i));
+        }
+        utarray_resize(currTimeline->snapshots, currentTimestamp + 1);
+        utarray_push_back(currTimeline->children, childTimeline1);
+        
+        struct TimelineNode *childTimeline2 = newTimeline(currTimeline);
+        utarray_push_back(childTimeline2->snapshots, board);
+        utarray_push_back(currTimeline->children, childTimeline2);
+        currTimeline = childTimeline2;
+        currentTimestamp = 0;
+    }
+    printf("Timeline======\n");
+    printTimeline(rootTimeline, 0);
+    printf("--------------\n");
+    
+    layoutTimeline(rootTimeline);
+}
+
+void doRenderTimeline(struct TimelineViewNode *timelineView, int level) {
+    // printIndent(level);
+    // printf("doRenderTimeline\n");
+    struct TimelineNode *timeline = timelineView->timeline;
+    int length = utarray_len(timeline->snapshots);
+    GLfloat widthPerThumbnail = min(timelineView->height, max(0.25, timelineView->width / length));
+    GLfloat thumbnailWidth = 0.96 * widthPerThumbnail;
+    GLfloat thumbnailGap = 0.04 * widthPerThumbnail;
+    int numThumbnails = ceil(timelineView->width / (thumbnailWidth + thumbnailGap));
+    // printIndent(level);
+    // printf("doRenderTimeline(numThumbnails=%d)\n", numThumbnails);
     for (int i = 0; i < numThumbnails; i++) {
         int index = floor((float)i * length / numThumbnails);
         struct Board *board = utarray_eltptr(timeline->snapshots, index);
         struct BoardView boardView;
-        boardView.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_GAP) * i - 2 + 0.01;
-        boardView.y = -2;
-        boardView.size = TIMELINE_THUMBNAIL_WIDTH;
+        boardView.x = timelineView->x + (thumbnailWidth + thumbnailGap) * i + 0.01;
+        boardView.y = timelineView->y;
+        boardView.size = thumbnailWidth;
+        // printIndent(level);
+        // printf("boardView(x=%f, y=%f, size=%f)\n", boardView.x, boardView.y, boardView.size);
         updateBoardBuffer(&glSettings, &boardView);
         updatePiecesBuffer(&glSettings, board);
         renderBoard(&glSettings, &boardView, -1, 0, 0);
     }
+    // printIndent(level);
+    // printf("doRenderTimeline 3\n");
+    
+    if (timelineView->children != NULL) {
+        int numChildren = utarray_len(timelineView->children);
+        for (int i = 0; i < numChildren; i++) {
+            struct TimelineViewNode *childView = utarray_eltptr(timelineView->children, i);
+            doRenderTimeline(childView, level + 1);
+        }
+    }
+    // printIndent(level);
+    // printf("doRenderTimeline 4\n");
 }
 
+void renderTimeline() {
+    int length = utarray_len(rootTimeline->snapshots);
+    if (length <= 1) {
+        return;
+    }
+    
+    doRenderTimeline(&timelineView, 0);
+    
+    // 
+    // int numThumbnails = 4.0 / (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_THUMBNAIL_GAP);
+    // for (int i = 0; i < numThumbnails; i++) {
+    //     int index = floor((float)i * length / numThumbnails);
+    //     struct Board *board = utarray_eltptr(rootTimeline->snapshots, index);
+    //     struct BoardView boardView;
+    //     boardView.x = (TIMELINE_THUMBNAIL_WIDTH + TIMELINE_THUMBNAIL_GAP) * i - 2 + 0.01;
+    //     boardView.y = -2;
+    //     boardView.size = TIMELINE_THUMBNAIL_WIDTH;
+    //     updateBoardBuffer(&glSettings, &boardView);
+    //     updatePiecesBuffer(&glSettings, board);
+    //     renderBoard(&glSettings, &boardView, -1, 0, 0);
+    // }
+}
 
 void renderTimeMarker() {
-    int timelineLength = utarray_len(timeline->snapshots);
+    int timelineLength = utarray_len(rootTimeline->snapshots);
     GLfloat timeMarkerGap = 0.0001;
     GLfloat x;
     if (timelineLength <= 1) {
@@ -408,7 +686,7 @@ void renderTimeMarker() {
 }
 
 void updateMainBoard() {
-    memcpy(&mainBoard, utarray_eltptr(timeline->snapshots, currentTimestamp), sizeof(struct Board));
+    memcpy(&mainBoard, utarray_eltptr(currTimeline->snapshots, currentTimestamp), sizeof(struct Board));
 }
 
 void animateTimeMarkerToTimestamp(int timestamp) {
@@ -416,7 +694,7 @@ void animateTimeMarkerToTimestamp(int timestamp) {
         return;
     }
     GLfloat srcX;
-    int timelineLength = utarray_len(timeline->snapshots);
+    int timelineLength = utarray_len(currTimeline->snapshots);
     GLfloat timeMarkerGap = 0.0001;
     GLfloat dstX = (2 - 2 * timeMarkerGap) * (((float)timestamp) / (float)(timelineLength - 1)) - 1 + timeMarkerGap;
     if (timeMarkerAnimation.endTick != 0) {
@@ -437,11 +715,13 @@ void animateTimeMarkerToTimestamp(int timestamp) {
 }
 
 void updateTimeMarkerPosition(double posx) {
-    int timelineLength = utarray_len(timeline->snapshots);
+    int timelineLength = utarray_len(rootTimeline->snapshots);
     GLfloat timestampPercent = posx / WINDOW_WIDTH;
     int newCurrentTimestamp = round((timelineLength - 1) * timestampPercent);
     if (newCurrentTimestamp != currentTimestamp) {
-        animateTimeMarkerToTimestamp(newCurrentTimestamp);
+        // animateTimeMarkerToTimestamp(newCurrentTimestamp);
+        currentTimestamp = newCurrentTimestamp;
+        updateMainBoard();
     }
 }
 
@@ -450,7 +730,6 @@ void updateTimeMarkerState() {
         // Update animation
         if (timeMarkerAnimation.currentTick >= timeMarkerAnimation.endTick) {
             // Animation complete
-            // printf("Animation complete\n");
             timeMarkerAnimation.endTick = 0;
             currentTimestamp = timeMarkerAnimation.targetTimestamp;
             updateMainBoard();
@@ -461,8 +740,8 @@ void updateTimeMarkerState() {
 }
 
 void initTimeline() {
-    timeline = malloc(sizeof(struct TimelineNode));
-    utarray_new(timeline->snapshots, &board_icd);
+    rootTimeline = newTimeline(NULL);
+    currTimeline = rootTimeline;
 }
 
 void commitMove(int destPos, int srcPos) {
@@ -550,15 +829,26 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     if (key == GLFW_KEY_LEFT && action == GLFW_PRESS) {
         int targetTimestamp = currentTimestamp - 1;
         if (targetTimestamp < 0) {
-            targetTimestamp = utarray_len(timeline->snapshots) - 1;
+            if (currTimeline->parent != NULL) {
+                currTimeline = currTimeline->parent;
+                targetTimestamp = utarray_len(currTimeline->snapshots) - 1;
+            } else {
+                targetTimestamp = 0;
+            }
         }
-        animateTimeMarkerToTimestamp(targetTimestamp);
+        // animateTimeMarkerToTimestamp(targetTimestamp);
+        currentTimestamp = targetTimestamp;
+        updateMainBoard();
+        printf("Set currentTimestamp to %d\n", currentTimestamp);
     } else if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
         int targetTimestamp = currentTimestamp + 1;
-        if (targetTimestamp >= utarray_len(timeline->snapshots)) {
+        if (targetTimestamp >= utarray_len(currTimeline->snapshots)) {
             targetTimestamp = 0;
         }
-        animateTimeMarkerToTimestamp(targetTimestamp);
+        // animateTimeMarkerToTimestamp(targetTimestamp);
+        currentTimestamp = targetTimestamp;
+        updateMainBoard();
+        printf("Set currentTimestamp to %d\n", currentTimestamp);
     }
 }
 
@@ -580,6 +870,8 @@ int appMainLoop() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
     glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
+    
+    
     
     window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MyChess", NULL, NULL);
     
@@ -618,11 +910,13 @@ int appMainLoop() {
     mainBoardView.size = 2;
     
     initTimeline();
+    timelineView.children = NULL;
     
     addToTimeline(&mainBoard);
     
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        // glfwWaitEvents();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         updateBoardBuffer(&glSettings, &mainBoardView);
         updatePiecesBuffer(&glSettings, &mainBoard);
