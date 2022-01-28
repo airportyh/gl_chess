@@ -843,7 +843,12 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     } else if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
         int targetTimestamp = currentTimestamp + 1;
         if (targetTimestamp >= utarray_len(currTimeline->snapshots)) {
-            targetTimestamp = 0;
+            if (utarray_len(currTimeline->children) > 0) {
+                currTimeline = utarray_eltptr(currTimeline->children, 0);
+                targetTimestamp = 0;
+            } else {
+                targetTimestamp = utarray_len(currTimeline->snapshots) - 1;
+            }
         }
         // animateTimeMarkerToTimestamp(targetTimestamp);
         currentTimestamp = targetTimestamp;
