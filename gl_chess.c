@@ -833,7 +833,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
                 currTimeline = currTimeline->parent;
                 targetTimestamp = utarray_len(currTimeline->snapshots) - 1;
             } else {
-                targetTimestamp = 0;
+                return;
             }
         }
         // animateTimeMarkerToTimestamp(targetTimestamp);
@@ -844,16 +844,30 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
         int targetTimestamp = currentTimestamp + 1;
         if (targetTimestamp >= utarray_len(currTimeline->snapshots)) {
             if (utarray_len(currTimeline->children) > 0) {
+                printf("move to child timeline\n");
                 currTimeline = utarray_eltptr(currTimeline->children, 0);
                 targetTimestamp = 0;
             } else {
-                targetTimestamp = utarray_len(currTimeline->snapshots) - 1;
+                printf("cancel\n");
+                return;
             }
         }
         // animateTimeMarkerToTimestamp(targetTimestamp);
         currentTimestamp = targetTimestamp;
         updateMainBoard();
         printf("Set currentTimestamp to %d\n", currentTimestamp);
+    } else if (key == GLFW_KEY_DOWN && action == GLFW_PRESS) {
+        if (currTimeline->parent != NULL) {
+            int childIdx = utarray_eltidx(currTimeline->parent->children, currTimeline);
+            int nextChildIdx = childIdx + 1;
+            if (nextChildIdx >= utarray_len(currTimeline->parent->children)) {
+                nextChildIdx = 0;
+            }
+            currTimeline = utarray_eltptr(currTimeline->parent->children, nextChildIdx);
+            currentTimestamp = 0;
+            updateMainBoard();
+        }
+        
     }
 }
 
