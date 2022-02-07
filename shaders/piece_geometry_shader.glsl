@@ -6,6 +6,7 @@ in VS_OUT {
     float size;
     vec2 fragCoordTopLeft;
 } gs_in[];
+uniform mat4 perspective;
 
 out vec2 fragTexCoord;
 
@@ -20,20 +21,20 @@ void main() {
     
     vec2 fragCoordTopLeft = gs_in[0].fragCoordTopLeft;
     //fragCoordTopLeft = vec2(2.0 / 7.0, 0.5);
-    gl_Position = position + vec4(0, size, 0, 1);
-    fragTexCoord = fragCoordTopLeft;
-    EmitVertex();
-    
-    gl_Position = position + vec4(size, size, 0, 1);
-    fragTexCoord = fragCoordTopLeft + vec2(pieceLength, 0);
-    EmitVertex();
-    
-    gl_Position = position + vec4(0, 0, 0, 1);
+    gl_Position = perspective * (position + vec4(0, size, 0, 0));
     fragTexCoord = fragCoordTopLeft + vec2(0, 0.5);
     EmitVertex();
     
-    gl_Position = position + vec4(size, 0, 0, 1);
+    gl_Position = perspective * (position + vec4(size, size, 0, 0));
     fragTexCoord = fragCoordTopLeft + vec2(pieceLength, 0.5);
+    EmitVertex();
+    
+    gl_Position = perspective * position;
+    fragTexCoord = fragCoordTopLeft;
+    EmitVertex();
+    
+    gl_Position = perspective * (position + vec4(size, 0, 0, 0));
+    fragTexCoord = fragCoordTopLeft + vec2(pieceLength, 0);
     EmitVertex();
     
     EndPrimitive();

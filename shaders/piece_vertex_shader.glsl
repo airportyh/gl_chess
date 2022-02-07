@@ -17,7 +17,12 @@ void main() {
     if (boardPos == overrideID) {
         vertex = boardTopLeft + overridePosition;        
     }  else {
-        vertex = boardTopLeft + (vec2(mod(boardPos, 8), 7 - boardPos / 8) * boardSize / 8);
+        vertex = boardTopLeft + (
+            vec2(
+                mod(boardPos, 8), 
+                boardPos / 8
+            ) * boardSize / 8
+        );
     }
     gl_Position = vec4(vertex, 0.0, 1.0);
     vs_out.size = boardSize / 8;

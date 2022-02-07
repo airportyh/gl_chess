@@ -1,9 +1,17 @@
 # Todo
 
-* allow keyboard to navigate forked timeline
-* allow mouse to navigate forked timeline
 * use a matrix transform or similar to convert world coordinates
     to be same as screen coordinates so it's easier for me to think about
+* main board and timeline(s) know where they are and have uniform way for
+    them to receive mouse input
+* zoom in for timeline
+* scrollbars for timeline
+* fix time marker to work for forked timeline
+* timeline: save vertical space by reusing space unused by stopped branches
+
+* minimap for timeline
+* arrow pointing at where we are when zoom/panning within timeline
+* allow mouse to navigate forked timeline
 * animate moves when forwarding rewinding time line
 * mouse hover preview
 * castling
@@ -14,6 +22,7 @@
 
 ## Done
 
+* allow keyboard to navigate forked timeline (done)
 * forking of timeline (done)
 * fix dragging pieces not animating (done)
 * refactor: pass board top-left as a uniform for piece rendering so that 
