@@ -57,8 +57,10 @@ struct GLSettings {
     GLuint timeMarkerProgram;
     GLuint boardTextureId;
     GLuint boardTexUniformId;
+    GLuint boardPerspectiveUniformId;
     GLuint piecesTextureId;
     GLuint piecesTexUniformId;
+    GLuint piecesPerspectiveUniformId;
     GLint  boardSizeUniform;
     GLint  boardTopLeftUniform;
     GLint  overrideIDUniform;
@@ -340,23 +342,45 @@ int loadTexture(char *imageFile) {
 }
 
 void initGLSettings(struct GLSettings *glSettings) {
-    glSettings->piecesProgram = compileProgram("shaders/piece_vertex_shader.glsl", "shaders/piece_geometry_shader.glsl", "shaders/common_fragment_shader.glsl");
-    glSettings->boardProgram = compileProgram("shaders/board_vertex_shader.glsl", "shaders/board_geometry_shader.glsl", "shaders/common_fragment_shader.glsl");
+    glSettings->piecesProgram = compileProgram(
+        "shaders/piece_vertex_shader.glsl", 
+        "shaders/piece_geometry_shader.glsl", 
+        "shaders/common_fragment_shader.glsl"
+    );
+    glSettings->boardProgram = compileProgram(
+        "shaders/board_vertex_shader.glsl", 
+        "shaders/board_geometry_shader.glsl", 
+        "shaders/common_fragment_shader.glsl"
+    );
     glSettings->timeMarkerProgram = compileProgram("shaders/time_marker_vertex_shader.glsl", NULL, "shaders/time_marker_fragment_shader.glsl");
     glSettings->piecesTextureId = loadTexture("sprite.png");
     glSettings->piecesTexUniformId = glGetUniformLocation(glSettings->piecesProgram, "tex");
+    glSettings->piecesPerspectiveUniformId = glGetUniformLocation(glSettings->piecesProgram, "perspective");
     glSettings->boardTextureId = loadTexture("board.png");
     glSettings->boardTexUniformId = glGetUniformLocation(glSettings->boardProgram, "tex");
+    glSettings->boardPerspectiveUniformId = glGetUniformLocation(glSettings->boardProgram, "perspective");
 }
 
 void renderBoard(
     struct GLSettings *glSettings, struct BoardView *boardView,
     GLint overrideId, GLfloat overrideX, GLfloat overrideY
 ) {
+    GLfloat a = 2.0 / WINDOW_WIDTH;
+    GLfloat b = -2.0 / WINDOW_HEIGHT;
+    GLfloat c = -1;
+    GLfloat d = 1;
+    const GLfloat perspectiveMatrix[16] = {
+        a, 0, 0, c, 
+        0, b, 0, d,
+        0, 0, 1, 0,
+        0, 0, 0, 1
+    };
+    
     glUseProgram(glSettings->boardProgram);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, glSettings->boardTextureId);
     glUniform1i(glSettings->boardTexUniformId, 0);
+    glUniformMatrix4fv(glSettings->boardPerspectiveUniformId, 1, GL_TRUE, perspectiveMatrix);
     glBindVertexArray(glSettings->boardVertexArrayId);
     glDrawArrays(GL_POINTS, 0, 1);
     
@@ -369,6 +393,7 @@ void renderBoard(
     
     glUniform1i(glSettings->overrideIDUniform, overrideId);
     glUniform2f(glSettings->overridePositionUniform, overrideX, overrideY);
+    glUniformMatrix4fv(glSettings->piecesPerspectiveUniformId, 1, GL_TRUE, perspectiveMatrix);
     
     glBindVertexArray(glSettings->piecesVertexArrayId);
     glDrawArrays(GL_POINTS, 0, 64);
@@ -924,9 +949,9 @@ int appMainLoop() {
     
     initBoard(&mainBoard);
     
-    mainBoardView.x = -1;
-    mainBoardView.y = -1;
-    mainBoardView.size = 2;
+    mainBoardView.x = (float)WINDOW_WIDTH / 4;
+    mainBoardView.y = 0;
+    mainBoardView.size = (float)WINDOW_WIDTH / 2;
     
     initTimeline();
     timelineView.children = NULL;
@@ -942,9 +967,9 @@ int appMainLoop() {
         // printf("boardView.x = %f, boardView.y = %f\n", mainBoardView.x, mainBoardView.y);
         
         renderBoard(&glSettings, &mainBoardView, draggingSquare, draggingPieceX, draggingPieceY);
-        renderTimeline();
-        updateTimeMarkerState();
-        renderTimeMarker();
+        // renderTimeline();
+        // updateTimeMarkerState();
+        // renderTimeMarker();
         glfwSwapBuffers(window);
     }
     
