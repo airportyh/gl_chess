@@ -530,7 +530,7 @@ void doLayoutTimeline(
     timelineView->x = offsetx;
     timelineView->height = heightPerLine;
     // timelineView->y = offsety - (GLfloat)totalHeight * heightPerLine;
-    timelineView->y = offsety - heightPerLine;
+    timelineView->y = offsety;
     int timelineLength = utarray_len(timeline->snapshots);
     timelineView->width = ((float)timelineLength / (float)totalLength) * width;
     
@@ -576,7 +576,8 @@ void layoutTimeline(struct TimelineNode *timeline) {
     doLayoutTimeline(
         timeline, 0, (GLfloat)WINDOW_HEIGHT / 2, 
         length, height,
-        WINDOW_WIDTH, (GLfloat)((GLfloat)WINDOW_HEIGHT / 2) / height,
+        WINDOW_WIDTH, 
+        (GLfloat)((GLfloat)WINDOW_HEIGHT / 2) / height,
         &timelineView,
         0
     );
@@ -969,7 +970,7 @@ int appMainLoop() {
         // printf("boardView.x = %f, boardView.y = %f\n", mainBoardView.x, mainBoardView.y);
         
         renderBoard(&glSettings, &mainBoardView, draggingSquare, draggingPieceX, draggingPieceY);
-        // renderTimeline();
+        renderTimeline();
         // updateTimeMarkerState();
         // renderTimeMarker();
         glfwSwapBuffers(window);
