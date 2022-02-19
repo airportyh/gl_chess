@@ -574,9 +574,9 @@ void layoutTimeline(struct TimelineNode *timeline) {
     printf("layoutTimeline(totalLength=%d, totalHeight=%d, width=%d, heightPerLine=%f)\n", length, height, 4, (GLfloat)1 / height);
     
     doLayoutTimeline(
-        timeline, -2, -1, 
+        timeline, 0, (GLfloat)WINDOW_HEIGHT / 2, 
         length, height,
-        4, (GLfloat)1 / height,
+        WINDOW_WIDTH, (GLfloat)((GLfloat)WINDOW_HEIGHT / 2) / height,
         &timelineView,
         0
     );
@@ -784,8 +784,9 @@ void commitMove(int destPos, int srcPos) {
 
 void updateDraggingPiecePosition(double posx, double posy) {
     GLfloat squareLength = 2.0 / 8.0;
-    draggingPieceX = (posx - WINDOW_WIDTH / 2) * 4 / WINDOW_WIDTH - 0.5 * squareLength - mainBoardView.x;
-    draggingPieceY = - (posy - WINDOW_HEIGHT / 2) * 4 / WINDOW_HEIGHT - 0.5 * squareLength - mainBoardView.y;
+    // TODO
+    draggingPieceX = posx - mainBoardView.x - (mainBoardView.size / 16.0);
+    draggingPieceY = posy - mainBoardView.y - (mainBoardView.size / 16.0);
 }
 
 /*
@@ -812,11 +813,11 @@ void cursorPositionCallback(GLFWwindow *window, double posx, double posy) {
 
 void handleMainBoardMouseClick(int button, int action, double posx, double posy) {
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        int column = 4 + 8.0 * (posx - WINDOW_WIDTH / 2) / (WINDOW_WIDTH / 2);
-        int row = 4 + 8.0 * (posy - WINDOW_HEIGHT / 2) / (WINDOW_HEIGHT / 2) ;
+        int column = (int)(8.0 * (posx - mainBoardView.x) / mainBoardView.size);
+        int row = (int)(8.0 * (posy - mainBoardView.y) / mainBoardView.size);
         int boardPos = row * 8 + column;
         if (action == GLFW_PRESS) {
-            // printf("Start drag from row = %d, column = %d, boardPos = %d\n", row, column, boardPos);
+            printf("Start drag from row = %d, column = %d, boardPos = %d\n", row, column, boardPos);
             draggingSquare = boardPos;
             updateDraggingPiecePosition(posx, posy);
         } else { // action == GLFW_RELEASE
@@ -842,7 +843,10 @@ void mouseButtonCallback(GLFWwindow *window, int button, int action, int modifie
     double posx, posy;
     glfwGetCursorPos(window, &posx, &posy);
     // printf("x = %f, y = %f\n", posx, posy);
-    if (posx >= WINDOW_WIDTH / 4 && posx <= 3 * WINDOW_WIDTH / 4 && posy >= WINDOW_HEIGHT / 4 && posy <= 3 * WINDOW_HEIGHT / 4) {
+    if (posx >= mainBoardView.x && 
+        posx <= (mainBoardView.x + mainBoardView.size) && 
+        posy >= mainBoardView.y &&
+        posy <= (mainBoardView.y + mainBoardView.size)) {
         handleMainBoardMouseClick(button, action, posx, posy);
     } else if (posy >= 7 * WINDOW_HEIGHT / 8) {
         handleTimelineMouseClick(button, action, posx, posy);
@@ -914,8 +918,6 @@ int appMainLoop() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
     glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
-    
-    
     
     window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MyChess", NULL, NULL);
     
