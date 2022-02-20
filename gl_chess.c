@@ -528,11 +528,14 @@ void doLayoutTimeline(
     timelineView->timeline = timeline;
     timelineView->children = NULL;
     timelineView->x = offsetx;
-    timelineView->height = heightPerLine;
-    // timelineView->y = offsety - (GLfloat)totalHeight * heightPerLine;
-    timelineView->y = offsety;
     int timelineLength = utarray_len(timeline->snapshots);
     timelineView->width = ((float)timelineLength / (float)totalLength) * width;
+    int length = utarray_len(timeline->snapshots);
+    GLfloat widthPerThumbnail = min(heightPerLine, max(0.25, timelineView->width / length));
+    GLfloat thumbnailWidth = widthPerThumbnail;
+    
+    timelineView->height = thumbnailWidth;
+    timelineView->y = offsety;
     
     // printIndent(level);
     // printf("has children array\n");
@@ -549,7 +552,7 @@ void doLayoutTimeline(
         struct TimelineViewNode childView;
         doLayoutTimeline(
             child,
-            offsetx + timelineView->width, offsety - i * heightPerLine,
+            offsetx + timelineView->width, offsety + i * thumbnailWidth,
             totalLength, totalHeight,
             width, heightPerLine,
             &childView,
@@ -570,14 +573,18 @@ void layoutTimeline(struct TimelineNode *timeline) {
     int height = getTotalTimelineHeight(timeline);
     
     freeTimelineView(&timelineView);
+    GLfloat heightPerLine = (GLfloat)((GLfloat)WINDOW_HEIGHT / 2) / height;
     
-    printf("layoutTimeline(totalLength=%d, totalHeight=%d, width=%d, heightPerLine=%f)\n", length, height, 4, (GLfloat)1 / height);
+    printf(
+        "layoutTimeline(totalLength=%d, totalHeight=%d, width=%d, heightPerLine=%f)\n", 
+        length, height, 4, heightPerLine
+    );
     
     doLayoutTimeline(
         timeline, 0, (GLfloat)WINDOW_HEIGHT / 2, 
         length, height,
         WINDOW_WIDTH, 
-        (GLfloat)((GLfloat)WINDOW_HEIGHT / 2) / height,
+        heightPerLine,
         &timelineView,
         0
     );
@@ -620,7 +627,7 @@ void doRenderTimeline(struct TimelineViewNode *timelineView, int level) {
     // printf("doRenderTimeline\n");
     struct TimelineNode *timeline = timelineView->timeline;
     int length = utarray_len(timeline->snapshots);
-    GLfloat widthPerThumbnail = min(timelineView->height, max(0.25, timelineView->width / length));
+    GLfloat widthPerThumbnail = timelineView->height;
     GLfloat thumbnailWidth = 0.96 * widthPerThumbnail;
     GLfloat thumbnailGap = 0.04 * widthPerThumbnail;
     int numThumbnails = ceil(timelineView->width / (thumbnailWidth + thumbnailGap));
