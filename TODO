@@ -1,14 +1,17 @@
 # Todo
 
 * fix time marker
-* zoom in for timeline
-* scrollbars for timeline
 * fix time marker to work for forked timeline
+* horizontal scrollbars for timeline
+* vertical scrollbars for timeline
+* zoom in for timeline
 * timeline: save vertical space by reusing space unused by stopped branches
+* draw connectors for timeline
 
 * minimap for timeline
 * arrow pointing at where we are when zoom/panning within timeline
 * allow mouse to navigate forked timeline
+
 * animate moves when forwarding rewinding time line
 * mouse hover preview
 * castling

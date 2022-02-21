@@ -18,7 +18,7 @@
 #define TIMELINE_THUMBNAIL_GAP 0.02
 #define TIMELINE_GAP 0.1
 #define ANIMATION_DURATION 40
-#define TIME_MARKER_WIDTH 0.007
+#define TIME_MARKER_WIDTH 2
 
 enum Piece {
     WPawn=0, WKnight, WBiship, WRook, WKing, WQueen,
@@ -55,6 +55,7 @@ struct GLSettings {
     GLuint boardProgram;
     GLuint piecesProgram;
     GLuint timeMarkerProgram;
+    GLuint timeMarkerPerspectiveUniformId;
     GLuint boardTextureId;
     GLuint boardTexUniformId;
     GLuint boardPerspectiveUniformId;
@@ -91,6 +92,7 @@ struct GLSettings glSettings;
 struct TimelineNode *rootTimeline = NULL;
 struct TimelineNode *currTimeline = NULL;
 struct TimelineViewNode timelineView;
+struct TimelineViewNode *currTimelineView = NULL;
 int currentTimestamp = 0; // TODO: rename to currentSnapshot?
 GLfloat timeMarkerVertices[8];
 int draggingTimeMarker = 0;
@@ -98,6 +100,13 @@ int draggingSquare = -1;
 GLfloat draggingPieceX;
 GLfloat draggingPieceY;
 struct TimeMarkerAnimation timeMarkerAnimation;
+
+const GLfloat perspectiveMatrix[16] = {
+    2.0 / WINDOW_WIDTH, 0, 0, -1, 
+    0, -2.0 / WINDOW_HEIGHT, 0, 1,
+    0, 0, 1, 0,
+    0, 0, 0, 1
+};
 
 void displayGLVersions() {
     printf("OpenGL version: %s\n", glGetString(GL_VERSION));
@@ -353,6 +362,7 @@ void initGLSettings(struct GLSettings *glSettings) {
         "shaders/common_fragment_shader.glsl"
     );
     glSettings->timeMarkerProgram = compileProgram("shaders/time_marker_vertex_shader.glsl", NULL, "shaders/time_marker_fragment_shader.glsl");
+    glSettings->timeMarkerPerspectiveUniformId = glGetUniformLocation(glSettings->timeMarkerProgram, "perspective");
     glSettings->piecesTextureId = loadTexture("sprite.png");
     glSettings->piecesTexUniformId = glGetUniformLocation(glSettings->piecesProgram, "tex");
     glSettings->piecesPerspectiveUniformId = glGetUniformLocation(glSettings->piecesProgram, "perspective");
@@ -365,16 +375,6 @@ void renderBoard(
     struct GLSettings *glSettings, struct BoardView *boardView,
     GLint overrideId, GLfloat overrideX, GLfloat overrideY
 ) {
-    GLfloat a = 2.0 / WINDOW_WIDTH;
-    GLfloat b = -2.0 / WINDOW_HEIGHT;
-    GLfloat c = -1;
-    GLfloat d = 1;
-    const GLfloat perspectiveMatrix[16] = {
-        a, 0, 0, c, 
-        0, b, 0, d,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-    };
     
     glUseProgram(glSettings->boardProgram);
     glActiveTexture(GL_TEXTURE0);
@@ -519,11 +519,17 @@ void doLayoutTimeline(
     struct TimelineViewNode *timelineView,
     int level
 ) {
-    // printIndent(level);
+    printIndent(level);
+    printf("doLayoutTimeline\n");
     if (timeline == NULL) {
         // printIndent(level);
         // printf("Early return\n");
         return;
+    }
+    if (timeline == currTimeline) {
+        printIndent(level);
+        printf("Updated currTimelineView\n");
+        currTimelineView = timelineView;
     }
     timelineView->timeline = timeline;
     timelineView->children = NULL;
@@ -547,18 +553,19 @@ void doLayoutTimeline(
     }
     utarray_new(timelineView->children, &timeline_view_icd);
     // printf("Allocated timelineView->children %u\n", (unsigned)timelineView->children);
+    utarray_resize(timelineView->children, numChildren);
     for (int i = 0; i < numChildren; i++) {
         struct TimelineNode *child = utarray_eltptr(timeline->children, i);
-        struct TimelineViewNode childView;
+        struct TimelineViewNode *childView = utarray_eltptr(timelineView->children, i);
         doLayoutTimeline(
             child,
             offsetx + timelineView->width, offsety + i * thumbnailWidth,
             totalLength, totalHeight,
             width, heightPerLine,
-            &childView,
+            childView,
             level + 1
         );
-        utarray_push_back(timelineView->children, &childView);
+        
         // printIndent(level);
         // printf("pushed child view\n");
     }
@@ -595,8 +602,8 @@ void layoutTimeline(struct TimelineNode *timeline) {
 void addToTimeline(struct Board *board) {
     int timelineLength = utarray_len(currTimeline->snapshots);
     if (timelineLength == 0 || (currentTimestamp == timelineLength - 1)) {
-        printf("Pushing to end of currTimeline\n");
         utarray_push_back(currTimeline->snapshots, board);
+        printf("Pushing to end of currTimeline, new count: %d\n", utarray_len(currTimeline->snapshots));
         currentTimestamp = utarray_len(currTimeline->snapshots) - 1;
     } else {
         printf("Forking timeline. currentTimestamp = %d, timelineLength = %d\n", currentTimestamp, timelineLength);
@@ -612,7 +619,7 @@ void addToTimeline(struct Board *board) {
         struct TimelineNode *childTimeline2 = newTimeline(currTimeline);
         utarray_push_back(childTimeline2->snapshots, board);
         utarray_push_back(currTimeline->children, childTimeline2);
-        currTimeline = childTimeline2;
+        currTimeline = utarray_back(currTimeline->children);
         currentTimestamp = 0;
     }
     printf("Timeline======\n");
@@ -684,33 +691,41 @@ void renderTimeline() {
 }
 
 void renderTimeMarker() {
-    int timelineLength = utarray_len(rootTimeline->snapshots);
+    int timelineLength = utarray_len(currTimeline->snapshots);
     GLfloat timeMarkerGap = 0.0001;
     GLfloat x;
-    if (timelineLength <= 1) {
+    if (currTimeline == rootTimeline && timelineLength <= 1) {
         return;
     }
     
     if (timeMarkerAnimation.endTick > 0) {
         // render tween state
+        // TODO
         GLfloat animationPercent = (float)timeMarkerAnimation.currentTick / (float)timeMarkerAnimation.endTick;
         x = (1.0 - animationPercent) * timeMarkerAnimation.srcX + animationPercent * timeMarkerAnimation.dstX;
         // printf("animationPercent = %f, x = %f\n", animationPercent, x);
-        
+    
     } else {
-        x = (2 - 2 * timeMarkerGap) * (((float)currentTimestamp) / (float)(timelineLength - 1)) - 1 + timeMarkerGap;
+        if (timelineLength == 1) {
+            x = currTimelineView->x; 
+        } else {
+            x = currTimelineView->x + 
+                currTimelineView->width * 
+                (((float)currentTimestamp) / (float)(timelineLength - 1)) - 1;
+        }
     }
     
-    x -= 0.005;
     glUseProgram(glSettings.timeMarkerProgram);
+    glUniformMatrix4fv(glSettings.timeMarkerPerspectiveUniformId, 1, GL_TRUE, perspectiveMatrix);
+    
     timeMarkerVertices[0] = x;
-    timeMarkerVertices[1] = -0.76;
+    timeMarkerVertices[1] = currTimelineView->y;
     timeMarkerVertices[2] = x + TIME_MARKER_WIDTH;
-    timeMarkerVertices[3] = -0.76;
+    timeMarkerVertices[3] = currTimelineView->y;
     timeMarkerVertices[4] = x;
-    timeMarkerVertices[5] = -1.2;
+    timeMarkerVertices[5] = currTimelineView->y + currTimelineView->height;
     timeMarkerVertices[6] = x + TIME_MARKER_WIDTH;
-    timeMarkerVertices[7] = -1.2;
+    timeMarkerVertices[7] = currTimelineView->y + currTimelineView->height;
     
     glBindBuffer(GL_ARRAY_BUFFER, glSettings.timeMarkerBufferId);
     glBufferData(GL_ARRAY_BUFFER, sizeof(timeMarkerVertices), timeMarkerVertices, GL_STATIC_DRAW);
@@ -869,6 +884,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
             if (currTimeline->parent != NULL) {
                 currTimeline = currTimeline->parent;
                 targetTimestamp = utarray_len(currTimeline->snapshots) - 1;
+                layoutTimeline(rootTimeline);
             } else {
                 return;
             }
@@ -878,12 +894,14 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
         updateMainBoard();
         printf("Set currentTimestamp to %d\n", currentTimestamp);
     } else if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS) {
+        printf("Right arrow\n");
         int targetTimestamp = currentTimestamp + 1;
         if (targetTimestamp >= utarray_len(currTimeline->snapshots)) {
             if (utarray_len(currTimeline->children) > 0) {
                 printf("move to child timeline\n");
                 currTimeline = utarray_eltptr(currTimeline->children, 0);
                 targetTimestamp = 0;
+                layoutTimeline(rootTimeline);
             } else {
                 printf("cancel\n");
                 return;
@@ -902,9 +920,21 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
             }
             currTimeline = utarray_eltptr(currTimeline->parent->children, nextChildIdx);
             currentTimestamp = 0;
+            layoutTimeline(rootTimeline);
             updateMainBoard();
         }
-        
+    } else if (key == GLFW_KEY_UP && action == GLFW_PRESS) {
+        if (currTimeline->parent != NULL) {
+            int childIdx = utarray_eltidx(currTimeline->parent->children, currTimeline);
+            int nextChildIdx = childIdx - 1;
+            if (nextChildIdx < 0) {
+                nextChildIdx = utarray_len(currTimeline->parent->children) - 1;
+            }
+            currTimeline = utarray_eltptr(currTimeline->parent->children, nextChildIdx);
+            currentTimestamp = 0;
+            layoutTimeline(rootTimeline);
+            updateMainBoard();
+        }
     }
 }
 
