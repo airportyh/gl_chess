@@ -1,9 +1,6 @@
 # Todo
 
-* use a matrix transform or similar to convert world coordinates
-    to be same as screen coordinates so it's easier for me to think about
-* main board and timeline(s) know where they are and have uniform way for
-    them to receive mouse input
+* fix time marker
 * zoom in for timeline
 * scrollbars for timeline
 * fix time marker to work for forked timeline
@@ -22,6 +19,9 @@
 
 ## Done
 
+* fix thumbnail size (done)
+* use a matrix transform or similar to convert world coordinates (done)
+    to be same as screen coordinates so it's easier for me to think about
 * allow keyboard to navigate forked timeline (done)
 * forking of timeline (done)
 * fix dragging pieces not animating (done)

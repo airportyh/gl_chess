@@ -531,7 +531,7 @@ void doLayoutTimeline(
     int timelineLength = utarray_len(timeline->snapshots);
     timelineView->width = ((float)timelineLength / (float)totalLength) * width;
     int length = utarray_len(timeline->snapshots);
-    GLfloat widthPerThumbnail = min(heightPerLine, max(0.25, timelineView->width / length));
+    GLfloat widthPerThumbnail = min(100, timelineView->width / length);
     GLfloat thumbnailWidth = widthPerThumbnail;
     
     timelineView->height = thumbnailWidth;
@@ -978,8 +978,8 @@ int appMainLoop() {
         
         renderBoard(&glSettings, &mainBoardView, draggingSquare, draggingPieceX, draggingPieceY);
         renderTimeline();
-        // updateTimeMarkerState();
-        // renderTimeMarker();
+        updateTimeMarkerState();
+        renderTimeMarker();
         glfwSwapBuffers(window);
     }
     
