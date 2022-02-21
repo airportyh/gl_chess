@@ -1,7 +1,5 @@
 # Todo
 
-* fix time marker
-* fix time marker to work for forked timeline
 * horizontal scrollbars for timeline
 * vertical scrollbars for timeline
 * zoom in for timeline
@@ -22,6 +20,8 @@
 
 ## Done
 
+* fix time marker (done)
+* fix time marker to work for forked timeline (done)
 * fix thumbnail size (done)
 * use a matrix transform or similar to convert world coordinates (done)
     to be same as screen coordinates so it's easier for me to think about

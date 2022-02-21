@@ -707,7 +707,7 @@ void renderTimeMarker() {
     
     } else {
         if (timelineLength == 1) {
-            x = currTimelineView->x; 
+            x = currTimelineView->x + currTimelineView->width - 1; 
         } else {
             x = currTimelineView->x + 
                 currTimelineView->width * 
